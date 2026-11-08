@@ -1,0 +1,37 @@
+# ==============================================================================
+# Development Docker Compose Overrides
+# Automatically merged by Docker Compose in development environments
+# Provides hot-reloading, host port exposure, and local debugging volumes
+# ==============================================================================
+
+services:
+  db:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  backend:
+    environment:
+      DEBUG: "1"
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    volumes:
+      - ./backend:/src
+      - static_volume:/src/static
+      - media_volume:/src/media
+    ports:
+      - "8000:8000"
+
+  frontend:
+    environment:
+      NODE_ENV: development
+    command: ["npm", "run", "dev"]
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
