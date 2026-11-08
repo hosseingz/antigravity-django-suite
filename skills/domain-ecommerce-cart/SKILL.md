@@ -74,7 +74,7 @@ This module is designed as an optional domain extension. It does **not** bloat c
    python manage.py startapp cart apps/cart
    ```
 3. Deploy templates:
-   - Copy [`resources/backend/redis_cart.py`](./resources/backend/redis_cart.py) -> `backend/apps/cart/services/redis_cart.py`
+   - Copy [`resources/backend/redis_cart.py`](./resources/backend/redis_cart.py) -> `backend/apps/cart/redis_cart.py`
    - Copy [`resources/backend/views_cart.py`](./resources/backend/views_cart.py) -> `backend/apps/cart/views.py`
 4. Register routing in `backend/apps/cart/urls.py`:
    ```python

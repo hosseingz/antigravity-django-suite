@@ -65,9 +65,11 @@ Before scaffolding, review the technical rationale documented in [`security-hard
 The following production-ready templates are available in [`resources/`](./resources):
 
 - [`Dockerfile.backend`](./resources/Dockerfile.backend): Multi-stage build with cached wheel layer, unprivileged user `appuser`, pre-created static/media directories, and health checks.
+- [`Dockerfile.frontend`](./resources/Dockerfile.frontend): Multi-stage Next.js standalone container specification with unprivileged user `nextjs`.
 - [`entrypoint.sh`](./resources/entrypoint.sh): Signal-safe entrypoint with Python PostgreSQL socket polling (60s timeout), automated asset collection, migrations, and `exec` PID 1 handoff.
 - [`docker-compose.yml`](./resources/docker-compose.yml): Production compose definition with database & cache healthchecks, YAML anchors, and isolated Celery worker/beat profiles.
 - [`docker-compose.override.yml`](./resources/docker-compose.override.yml): Development overlay with live source mounting and hot reloading.
+- [`nginx.conf`](./resources/nginx.conf): Reverse proxy routing static/media volumes, backend APIs, and frontend pages.
 - [`.dockerignore`](./resources/.dockerignore): Exhaustive context exclusion list.
 - [`.env.example`](./resources/.env.example): Structured, leak-safe environment variables template.
 
@@ -82,25 +84,27 @@ Inspect whether the target project uses a monorepo structure:
 - Root project directory containing `./backend` and `./frontend`
 - If `./backend` does not exist, determine if Django resides at the root level and adjust destination paths accordingly.
 
-### Step 2: Deploy Dockerfile and Entrypoint
+### Step 2: Deploy Dockerfiles and Entrypoint
 1. Copy [`resources/Dockerfile.backend`](./resources/Dockerfile.backend) into `<target>/backend/Dockerfile`.
-2. Copy [`resources/entrypoint.sh`](./resources/entrypoint.sh) into `<target>/backend/entrypoint.sh`.
-3. Set executable permissions on the entrypoint script:
+2. Copy [`resources/Dockerfile.frontend`](./resources/Dockerfile.frontend) into `<target>/frontend/Dockerfile`.
+3. Copy [`resources/entrypoint.sh`](./resources/entrypoint.sh) into `<target>/backend/entrypoint.sh`.
+4. Set executable permissions on the entrypoint script:
    ```bash
    chmod +x backend/entrypoint.sh
    ```
-4. Verify backend `requirements.txt` contains required production dependencies:
+5. Verify backend `requirements.txt` contains required production dependencies:
    - `gunicorn>=21.2.0`
    - `psycopg[binary]>=3.1.18` (or `psycopg2-binary>=2.9.9`)
    - `django-environ>=0.11.2`
    - `redis>=5.0.3`
    - `celery>=5.3.6` (if asynchronous tasks are required)
 
-### Step 3: Deploy Orchestration & Environment Templates
+### Step 3: Deploy Orchestration, Reverse Proxy & Environment Templates
 1. Copy [`resources/docker-compose.yml`](./resources/docker-compose.yml) into `<target>/docker-compose.yml`.
 2. Copy [`resources/docker-compose.override.yml`](./resources/docker-compose.override.yml) into `<target>/docker-compose.override.yml`.
-3. Copy [`resources/.dockerignore`](./resources/.dockerignore) into `<target>/.dockerignore` and `<target>/backend/.dockerignore`.
-4. Copy [`resources/.env.example`](./resources/.env.example) into `<target>/.env.example`.
+3. Copy [`resources/nginx.conf`](./resources/nginx.conf) into `<target>/nginx/nginx.conf`.
+4. Copy [`resources/.dockerignore`](./resources/.dockerignore) into `<target>/.dockerignore` and `<target>/backend/.dockerignore`.
+5. Copy [`resources/.env.example`](./resources/.env.example) into `<target>/.env.example`.
 
 ### Step 4: Environment Initialization
 Instruct the user (or automate if approved) to generate a local `.env`:

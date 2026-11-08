@@ -16,7 +16,6 @@ services:
   backend:
     environment:
       DEBUG: "1"
-      DJANGO_SETTINGS_MODULE: config.settings.development
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
     volumes:
       - ./backend:/src

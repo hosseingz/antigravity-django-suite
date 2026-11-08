@@ -9,8 +9,8 @@
  */
 
 import { create } from 'zustand';
-import axios from 'axios';
-import { getOrCreateCartUUID, clearCartUUID } from './cartCookies';
+import { apiClient } from '@/lib/api/apiClient';
+import { getOrCreateCartUUID, clearCartUUID } from '@/lib/cart/cartCookies';
 
 /**
  * Standard cart item structure returned by DRF backend.
@@ -115,7 +115,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     try {
       const guestUUID = getOrCreateCartUUID();
-      const response = await axios.get<CartApiResponse>('/api/v2/cart/', {
+      const response = await apiClient.get<CartApiResponse>('/api/v2/cart/', {
         withCredentials: true,
         headers: {
           'X-CART-UUID': guestUUID,
@@ -174,7 +174,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     try {
       const guestUUID = getOrCreateCartUUID();
-      const response = await axios.post<CartApiResponse>(
+      const response = await apiClient.post<CartApiResponse>(
         '/api/v2/cart/',
         {
           product_id: productId,
@@ -231,7 +231,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     try {
       const guestUUID = getOrCreateCartUUID();
-      const response = await axios.patch<CartApiResponse>(
+      const response = await apiClient.patch<CartApiResponse>(
         '/api/v2/cart/',
         {
           product_id: productId,
@@ -287,7 +287,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     try {
       const guestUUID = getOrCreateCartUUID();
-      const response = await axios.delete<CartApiResponse>('/api/v2/cart/', {
+      const response = await apiClient.delete<CartApiResponse>('/api/v2/cart/', {
         withCredentials: true,
         headers: {
           'X-CART-UUID': guestUUID,
@@ -333,7 +333,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     try {
       const guestUUID = getOrCreateCartUUID();
-      const response = await axios.delete<CartApiResponse>('/api/v2/cart/', {
+      const response = await apiClient.delete<CartApiResponse>('/api/v2/cart/', {
         withCredentials: true,
         headers: {
           'X-CART-UUID': guestUUID,
@@ -381,7 +381,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     try {
       const guestUUID = getOrCreateCartUUID();
-      const response = await axios.get<CartApiResponse>('/api/v2/cart/', {
+      const response = await apiClient.get<CartApiResponse>('/api/v2/cart/', {
         withCredentials: true,
         headers: {
           'X-CART-UUID': guestUUID,

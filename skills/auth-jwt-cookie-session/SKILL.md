@@ -108,7 +108,7 @@ In `backend/config/settings.py` (referencing [`django-core-architecture`](../dja
 ```python
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "apps.authentication.backends.CookieJWTAuthentication",
+        "users.authentication.CookieJWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [

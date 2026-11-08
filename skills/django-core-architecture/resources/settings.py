@@ -166,7 +166,19 @@ DATABASES = {
 }
 
 # ------------------------------------------------------------------------------
-# 8. Password Validation
+# 8. Cache & Redis Configuration
+# ------------------------------------------------------------------------------
+REDIS_URL = env("REDIS_URL", default="redis://redis:6379/1")
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+    }
+}
+
+# ------------------------------------------------------------------------------
+# 9. Password Validation
 # ------------------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -176,7 +188,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # ------------------------------------------------------------------------------
-# 9. Internationalization
+# 10. Internationalization
 # ------------------------------------------------------------------------------
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
@@ -184,7 +196,7 @@ USE_I18N = True
 USE_TZ = True
 
 # ------------------------------------------------------------------------------
-# 10. Static & Media Asset Handling
+# 11. Static & Media Asset Handling
 # ------------------------------------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "static"
@@ -209,7 +221,7 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # ------------------------------------------------------------------------------
-# 11. Django REST Framework Baseline
+# 12. Django REST Framework Baseline
 # ------------------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (

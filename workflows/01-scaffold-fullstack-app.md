@@ -61,18 +61,20 @@ This workflow automates the greenfield scaffolding of an enterprise-grade fullst
    Copy the following templates from [`skills/django-docker-scaffold/resources/`](../skills/django-docker-scaffold/resources/) to the workspace root:
    - `docker-compose.yml` -> `./docker-compose.yml`
    - `docker-compose.override.yml` -> `./docker-compose.override.yml`
+   - `nginx.conf` -> `nginx/nginx.conf`
    - `.dockerignore` -> `./.dockerignore`
    - `.env.example` -> `./.env.example`
    - `Dockerfile.backend` -> `backend/Dockerfile`
+   - `Dockerfile.frontend` -> `frontend/Dockerfile`
    - `entrypoint.sh` -> `backend/entrypoint.sh`
 
 3. **Initialize Environment Variables**:
    ```bash
    cp .env.example .env
    ```
-   Generate cryptographically secure secrets for `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD` using Python:
+   Generate cryptographically secure secrets for `SECRET_KEY` and `POSTGRES_PASSWORD` using Python:
    ```bash
-   python -c "import secrets; print('DJANGO_SECRET_KEY=' + secrets.token_urlsafe(50))" >> .env
+   python -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(50))" >> .env
    ```
    Ensure `.env` contains the required network configuration keys:
    ```env
@@ -84,9 +86,10 @@ This workflow automates the greenfield scaffolding of an enterprise-grade fullst
 
    REDIS_URL=redis://redis:6379/1
 
-   DJANGO_SECRET_KEY=generate_secure_key_here
-   DJANGO_DEBUG=True
-   DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,backend
+   SECRET_KEY=generate_secure_key_here
+   DEBUG=0
+   ALLOWED_HOSTS=localhost,127.0.0.1,backend
+   DJANGO_SETTINGS_MODULE=config.settings
 
    CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
    CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://localhost:8080
@@ -158,6 +161,9 @@ This workflow automates the greenfield scaffolding of an enterprise-grade fullst
    # When bootstrapping fresh
    npx create-next-app@latest frontend --typescript --tailwind --eslint --app --src-dir=false --import-alias="@/*"
    ```
+   Deploy the production frontend Dockerfile:
+   - Copy [`skills/django-docker-scaffold/resources/Dockerfile.frontend`](../skills/django-docker-scaffold/resources/Dockerfile.frontend) -> `frontend/Dockerfile`
+   In `frontend/next.config.js` (or `next.config.mjs` / `next.config.ts`), configure `output: 'standalone'` to support containerized standalone execution.
 
 2. **Install Frontend HTTP Client**:
    ```bash

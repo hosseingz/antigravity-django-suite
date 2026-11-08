@@ -127,11 +127,10 @@ from cart.redis_cart import merge_guest_cart_if_needed
 class LoginAPIView(APIView):
     def post(self, request: Request) -> Response:
         # ... authenticate user ...
-        
-        # Merge guest cart if X-CART-UUID header is present
-        guest_uuid = request.headers.get("X-CART-UUID") or request.COOKIES.get("cart_guest_uuid")
-        if guest_uuid:
-            merge_guest_cart_if_needed(user.id, guest_uuid)
+        request.user = user
+
+        # Merge guest cart into user cart if X-CART-UUID is present
+        merge_guest_cart_if_needed(request)
             
         # ... return response with auth cookies ...
 ```

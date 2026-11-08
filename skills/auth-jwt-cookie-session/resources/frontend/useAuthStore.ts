@@ -10,8 +10,8 @@
  */
 
 import { create } from 'zustand';
-import { apiClient } from '../../nextjs-api-sync/resources/apiClient';
-import { API_ENDPOINTS } from '../../nextjs-api-sync/resources/apiConfig';
+import { apiClient } from '@/lib/api/apiClient';
+import { API_ENDPOINTS } from '@/lib/api/apiConfig';
 
 export interface UserProfile {
   id: number | string;
