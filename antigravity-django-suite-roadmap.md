@@ -19,10 +19,10 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
 [ Phase 4: Next.js API Synchronization ] ─────► COMPLETED (v1.0.0)
                 │
                 ▼
-[ Phase 5: Auth & JWT Cookie Sessions ] ──────► READY TO EXECUTE
+[ Phase 5: Auth & JWT Cookie Sessions ] ──────► COMPLETED (v1.0.0)
                 │
                 ▼
-[ Phase 6: Domain E-Commerce Module ] ────────► PLANNED
+[ Phase 6: Domain E-Commerce Module ] ────────► READY TO EXECUTE
 ```
 
 ---
@@ -87,16 +87,27 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
 ---
 
 ### Phase 5: Auth & JWT Cookie Sessions (`skills/auth-jwt-cookie-session/`)
-- **Status**: Ready to Execute
-- **Scope**:
-  - DRF + SimpleJWT / dj-rest-auth with secure `HttpOnly` cookie rotation.
-  - Zero token storage in browser `localStorage`.
-  - Next.js middleware session validation and route protection.
+- **Status**: Completed
+- **Deliverables**:
+  - Blueprint: `skills/auth-jwt-cookie-session/SKILL.md`
+  - Technical References:
+    - `skills/auth-jwt-cookie-session/references/cookie-lifecycle.md`
+    - `skills/auth-jwt-cookie-session/references/sms-otp-workflow.md`
+  - Resource Templates:
+    - `resources/backend/authentication.py`: DRF `CookieJWTAuthentication` inspecting headers and HttpOnly cookies with anti-silent degradation
+    - `resources/backend/views_auth.py`: `LoginAPIView`, `RefreshTokenView`, `LogoutAPIView`, `SendOtpView`, `VerifyOtpView`, and cookie utilities
+    - `resources/frontend/middleware.ts`: Next.js route guard preventing premature eviction by recognizing refresh cookies
+    - `resources/frontend/useAuthStore.ts`: Zustand auth store with non-sensitive localStorage hydration and zero token exposure
+- **Key Milestones**:
+  - Dual-token HttpOnly cookie architecture (`pod_access_token` and `pod_refresh_token`).
+  - Zero token storage in browser `localStorage` or client JS.
+  - Silent background refresh coordination with `apiClient.ts` single-refresh mutex lock.
+  - Redis-backed SMS OTP verification with 120s cooldown and 5-attempt brute-force lockout.
 
 ---
 
 ### Phase 6: Domain Modules: E-Commerce Cart & Catalog (`skills/domain-ecommerce-cart/`)
-- **Status**: Planned
+- **Status**: Ready to Execute
 - **Scope**:
   - Modular e-commerce domain app inside `apps/cart/` and `apps/catalog/`.
   - Cart state synchronization across anonymous sessions and authenticated users.
