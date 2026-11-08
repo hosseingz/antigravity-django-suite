@@ -22,7 +22,7 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
 [ Phase 5: Auth & JWT Cookie Sessions ] ──────► COMPLETED (v1.0.0)
                 │
                 ▼
-[ Phase 6: Domain E-Commerce Module ] ────────► READY TO EXECUTE
+[ Phase 6: Domain E-Commerce Cart ] ──────────► COMPLETED (v1.0.0)
 ```
 
 ---
@@ -99,15 +99,26 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
     - `resources/frontend/middleware.ts`: Next.js route guard preventing premature eviction by recognizing refresh cookies
     - `resources/frontend/useAuthStore.ts`: Zustand auth store with non-sensitive localStorage hydration and zero token exposure
 - **Key Milestones**:
-  - Dual-token HttpOnly cookie architecture (`pod_access_token` and `pod_refresh_token`).
-  - Zero token storage in browser `localStorage` or client JS.
-  - Silent background refresh coordination with `apiClient.ts` single-refresh mutex lock.
-  - Redis-backed SMS OTP verification with 120s cooldown and 5-attempt brute-force lockout.
+  - Dual HttpOnly cookie rotation (`pod_access_token` and `pod_refresh_token`).
+  - Zero token exposure to client-side JavaScript or localStorage.
+  - Redis-backed SMS OTP lifecycle with rate-limiting and cryptographic generation.
+  - Non-premature route eviction in Next.js middleware.
 
 ---
 
-### Phase 6: Domain Modules: E-Commerce Cart & Catalog (`skills/domain-ecommerce-cart/`)
-- **Status**: Ready to Execute
-- **Scope**:
-  - Modular e-commerce domain app inside `apps/cart/` and `apps/catalog/`.
-  - Cart state synchronization across anonymous sessions and authenticated users.
+### Phase 6: Domain Modules: E-Commerce Cart (`skills/domain-ecommerce-cart/`)
+- **Status**: Completed
+- **Deliverables**:
+  - Blueprint: `skills/domain-ecommerce-cart/SKILL.md`
+  - Technical Reference: `skills/domain-ecommerce-cart/references/monotonic-guard.md`
+  - Resource Templates:
+    - `resources/backend/redis_cart.py`: High-concurrency Redis hash cart engine with stock validation, byte-safe decoding, pipeline merges, and guest eviction
+    - `resources/backend/views_cart.py`: DRF `CartAPIView` handling `GET`, `POST`, `PATCH`, and `DELETE` with cache prevention headers
+    - `resources/frontend/cartCookies.ts`: RFC4122 guest UUID generation, cookie management, and cross-storage persistence
+    - `resources/frontend/useCartStore.ts`: Production Zustand store with monotonic sequence guard protection and offline localStorage fallback
+- **Key Milestones**:
+  - High-concurrency Redis hash shopping cart manager.
+  - Transparent guest cart tracking via `X-CART-UUID`.
+  - Atomic guest-to-user cart merging upon login.
+  - Monotonic Sequence Guard pattern in Zustand eliminating UI race conditions.
+  - Offline fallback with localStorage snapshots.
