@@ -37,23 +37,29 @@ Roles are **not** skills. They are not auto-discovered from this repository, and
 
 ## 3. Installing into a target project
 
-Roles live in this repository as source; they are installed into **your application repository**, because that is where the agent works.
+Roles and Skills live in this repository as source; they are installed into **your application repository**, because that is where the agent works.
 
-Antigravity reads custom agents from `<project>/.agents/agents/*.md`, so the installer writes exactly there — and nowhere else.
+### Full Suite (Roles + Skills + Rules + Workflows - Recommended)
+To install the entire suite so all skills, blueprints, and guardrails are in place:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-suite.ps1 -Target C:\src\myapp
+```
 
+### Roles Only
+To install only the role definitions (into `<project>/.agents/agents/*.md`):
 ```powershell
 # preview (no writes)
-pwsh ./scripts/install-roles.ps1 -Target C:\src\myapp -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -DryRun
 
 # install all seven roles
-pwsh ./scripts/install-roles.ps1 -Target C:\src\myapp
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp
 
 # install only what the current phase needs
-pwsh ./scripts/install-roles.ps1 -Target C:\src\myapp -Only suite-auth-security-reviewer,suite-qa-release-gate
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -Only suite-auth-security-reviewer,suite-qa-release-gate
 
 # inspect / remove
-pwsh ./scripts/install-roles.ps1 -Target C:\src\myapp -List
-pwsh ./scripts/install-roles.ps1 -Target C:\src\myapp -Uninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -List
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -Uninstall
 ```
 
 > **Execution policy:** on machines where script execution is disabled (`... running scripts is disabled on this system`), invoke the installer through a bypassed child process instead of calling the file directly:

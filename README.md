@@ -80,8 +80,25 @@ An enterprise-grade, high-performance skill suite for **Google Antigravity (AGY)
 
 Antigravity automatically discovers customizations by traversing workspace directories and global configuration roots. Customizations load using **progressive disclosure** (injecting names and descriptions into context, then loading full blueprints only when activated):
 
-### Method 1: Workspace Customization (Project-Specific)
-To integrate this suite into a specific application repository:
+### Method 1: Automated Full Suite Installation (Recommended)
+Deploy the full suite (Roles, Skills, Guardrails, and Workflows) into your application repository with safety tracking and idempotency:
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File .\scripts\install-suite.ps1 -Target "D:\Projects\my-app"
+
+# Preview changes without writing (DryRun)
+powershell -ExecutionPolicy Bypass -File .\scripts\install-suite.ps1 -Target "D:\Projects\my-app" -DryRun
+```
+
+This installs:
+- `.agents/agents/` — Stack-specific roles (`suite-backend-architect`, `suite-qa-release-gate`, etc.)
+- `.agents/skills/` — All 5 core skills with blueprints, reference architectures, and code resources
+- `.agents/rules/` — Safety protocols and guardrail rules
+- `.agents/workflows/` — Structured workflows and phase rosters
+
+### Method 2: Manual / Submodule Setup
+To integrate manually into an application repository:
 
 1. Clone or submodule this repository into your project's `.agent/` directory:
    ```bash
