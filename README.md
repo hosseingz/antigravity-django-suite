@@ -56,9 +56,13 @@ An enterprise-grade, high-performance skill suite for **Google Antigravity (AGY)
 
 - **Dual-Token HttpOnly Security**:
   - Zero tokens stored in browser `localStorage`, `sessionStorage`, or JavaScript variables (full XSS immunity).
-  - Dual cookie rotation: `pod_access_token` (15 minutes) and `pod_refresh_token` (7 days) with `HttpOnly; Secure; SameSite=Lax`.
-  - Custom DRF `CookieJWTAuthentication` with anti-silent degradation.
-  - Non-premature route eviction in Next.js Edge middleware allowing page transitions when refresh tokens exist.
+  - Dual cookie management: `pod_access_token` (15 minutes) and `pod_refresh_token` (7 days) scoped explicitly to `Path=/` with `HttpOnly; Secure; SameSite=Lax`.
+  - Stateful Refresh Token Rotation (RTR): Single-use refresh tokens tracked in Redis with automatic token family revocation upon reuse detection.
+  - Mandatory unique `jti` (JWT ID) claims in all generated payloads for deterministic server-side revocation.
+  - Cryptographic separation: dedicated `JWT_SIGNING_KEY` enforced (never reuses Django core `SECRET_KEY`).
+  - Custom DRF `CookieJWTAuthentication` with CSRF defense on cookie mutations and anti-silent degradation (explicit 401s).
+  - Deterministic logout eviction emitting `Max-Age=0` and past epoch expiration headers.
+  - Non-premature route eviction in Next.js Edge middleware allowing page transitions when refresh tokens exist on `Path=/`.
   - Single-refresh mutex lock in Axios preventing race conditions and infinite rotation loops.
   - Redis-backed SMS OTP verification with brute-force lockout rate-limiting and constant-time string comparison (`hmac.compare_digest`).
 
@@ -145,7 +149,7 @@ Each skill includes an authoritative `SKILL.md` blueprint, technical references,
 | **`django-docker-scaffold`** | Production multi-container Docker Compose, unprivileged non-root Debian Slim images, PID 1 signal handoff, and port isolation. | [`skills/django-docker-scaffold/SKILL.md`](skills/django-docker-scaffold/SKILL.md) |
 | **`django-core-architecture`** | Decoupled `config/` namespace, dynamic `apps/` syspath resolution, 12-factor `django-environ`, WhiteNoise, and container health probes. | [`skills/django-core-architecture/SKILL.md`](skills/django-core-architecture/SKILL.md) |
 | **`nextjs-api-sync`** | Dual-environment networking (SSR vs CSR), browser Axios single-refresh mutex lock, CSRF injection, and DRF error normalization. | [`skills/nextjs-api-sync/SKILL.md`](skills/nextjs-api-sync/SKILL.md) |
-| **`auth-jwt-cookie-session`** | Dual-token HttpOnly cookie authentication, DRF `CookieJWTAuthentication`, SMS OTP lifecycle, and Next.js non-premature route guard. | [`skills/auth-jwt-cookie-session/SKILL.md`](skills/auth-jwt-cookie-session/SKILL.md) |
+| **`auth-jwt-cookie-session`** | Dual-token HttpOnly cookie authentication (`Path=/`), Redis-backed stateful RTR, dedicated `JWT_SIGNING_KEY`, CSRF defense, and Next.js route guard. | [`skills/auth-jwt-cookie-session/SKILL.md`](skills/auth-jwt-cookie-session/SKILL.md) |
 | **`domain-ecommerce-cart`** | Decoupled Redis Hash shopping cart engine, transparent `X-CART-UUID` guest sessions, atomic cart merging, and Zustand monotonic sequence guards. | [`skills/domain-ecommerce-cart/SKILL.md`](skills/domain-ecommerce-cart/SKILL.md) |
 
 ---
@@ -170,7 +174,7 @@ All skills and workflows adhere strictly to the repository guardrail policies:
   - Enforces `exec "$@"` PID 1 command replacement in shell entrypoints.
   - Mandates socket-level PostgreSQL readiness verification (`pg_isready`).
   - Strictly forbids `makemigrations` inside container entrypoints.
-  - Prohibits storing JWTs in `localStorage` or `sessionStorage`.
+  - Prohibits storing JWTs in web storage; mandates cookie `Path=/`, stateful RTR with Redis blacklist, unique `jti`, dedicated `JWT_SIGNING_KEY`, and CSRF protection on cookie auth.
   - Enforces dual-environment networking (`INTERNAL_API_BASE_URL` vs `NEXT_PUBLIC_API_BASE_URL`).
 
 - **[Security Protocols & Baseline Constraints](.agent/rules/security-protocols.md)**:
@@ -208,7 +212,7 @@ antigravity-django-suite/
 
 ## Project Status & Roadmap
 
-The suite has completed all 7 development phases (v1.0.0). For a comprehensive breakdown of milestones and deliverables, consult the [Implementation Roadmap](antigravity-django-suite-roadmap.md).
+The suite has completed all 9 development phases (v1.1.0). For a comprehensive breakdown of milestones and deliverables, consult the [Implementation Roadmap](antigravity-django-suite-roadmap.md).
 
 ---
 

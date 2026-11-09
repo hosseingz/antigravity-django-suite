@@ -29,6 +29,9 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
                 │
                 ▼
 [ Phase 8: Architectural Parity Remediation ] ► COMPLETED (v1.0.1 - 100% Certified)
+                │
+                ▼
+[ Phase 9: Auth Hardening & Cryptographic Isolation ] ► COMPLETED (v1.1.0)
 ```
 
 ---
@@ -165,6 +168,18 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
 
 ---
 
+### Phase 9: Auth Hardening & Cryptographic Isolation (v1.1.0)
+- **Status**: Completed (100% Certified)
+- **Resolved Security & Architectural Standards**:
+  1. **Complete Frontend–Backend Cookie Scoping**: Standardized `Path=/` for both `pod_access_token` and `pod_refresh_token` cookies across DRF views and Next.js route middleware. This resolves route-guard deadlocks where client-side transitions and SSR middleware were unable to access refresh cookies restricted to `/api/auth/`.
+  2. **Stateful Refresh Token Rotation (RTR) & Family Revocation**: Prohibited stateless refresh tokens. Enforced single-use refresh tokens backed by Redis caching, accompanied by active token family tracking (`token_family:<family_id>`). If a previously consumed refresh token is presented again (replay attack), the entire family is immediately invalidated.
+  3. **Mandatory Unique Token Identifiers (`jti`)**: Enforced cryptographic UUIDv4 `jti` claims in all generated JWT payloads (access and refresh), enabling deterministic, immediate server-side revocation and blacklisting.
+  4. **Cryptographic Key Separation**: Prohibited signing JWTs using Django core `SECRET_KEY`. Enforced dedicated `JWT_SIGNING_KEY` across `.agent/rules/`, `settings.py`, and `django-docker-scaffold/resources/.env.example`.
+  5. **Deterministic Logout & Eviction Protocol**: Standardized client-side eviction on logout via explicit Set-Cookie headers with `Max-Age=0`, `expires=1970-01-01T00:00:00Z`, and `Path=/`, coupled with server-side Redis blacklisting.
+  6. **CSRF Countermeasures on Cookie Authentication**: Enforced strict CSRF validation for mutating HTTP methods (`POST`, `PUT`, `PATCH`, `DELETE`) when authentication is derived from cookies in `CookieJWTAuthentication`.
+
+---
+
 ## Final Project Status Summary
 
 | Phase | Title | Version | Status |
@@ -177,6 +192,7 @@ Comprehensive architectural roadmap and progress tracker for the `antigravity-dj
 | **Phase 6** | Domain Modules: E-Commerce Cart | v1.0.0 | Complete |
 | **Phase 7** | Operational Workflows & Master Documentation | v1.0.0 | Complete |
 | **Phase 8** | Architectural Parity Audit Remediation | v1.0.1 | Complete (100% Certified) |
+| **Phase 9** | Auth Hardening & Cryptographic Isolation | v1.1.0 | Complete (100% Certified) |
 
-**Total Suite Completion: 100% Production Ready (8 of 8 Phases Complete)**
+**Total Suite Completion: 100% Production Ready (9 of 9 Phases Complete)**
 
