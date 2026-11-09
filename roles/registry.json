@@ -1,0 +1,109 @@
+{
+  "schema_version": "1.0.0",
+  "catalog": "role-layer",
+  "version": "1.0.0",
+  "description": "Stack-specific role roster adapted from the agency-agents persona pattern. Roles are not skills: they carry review ownership, handoffs, and the definition of done, and always defer to .agent/rules.",
+  "upstream": {
+    "repo": "msitarzewski/agency-agents",
+    "url": "https://github.com/msitarzewski/agency-agents",
+    "commit": "8ae6164602c95ca78828b148b9052460ee426885",
+    "commit_date": "2026-11-09",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2025 AgentLand Contributors",
+    "relationship": "pattern-reference-only",
+    "vendored": false
+  },
+  "install": {
+    "source_dir": "roles",
+    "target_dir": ".agents/agents",
+    "filename_prefix": "suite-",
+    "state_file": ".agents/suite-install-state.json",
+    "reserved_foreign_prefixes": ["agency-"],
+    "never_touches": [
+      ".agent/",
+      ".agents/skills/",
+      ".agents/rules/",
+      ".agents/workflows/"
+    ],
+    "installer": "scripts/install-roles.ps1"
+  },
+  "precedence": [
+    ".agent/rules/ai-guardrails.md",
+    ".agent/rules/security-protocols.md",
+    ".agent/rules/role-delegation.md",
+    "role file (this catalog)",
+    "skill guidance"
+  ],
+  "roles": [
+    {
+      "name": "suite-backend-architect",
+      "file": "roles/suite-backend-architect.md",
+      "scope": "backend-architecture",
+      "risk": "medium",
+      "skills": ["django-core-architecture"],
+      "workflows": ["01-scaffold-fullstack-app"],
+      "handoff": ["suite-api-contract-reviewer", "suite-data-cache-engineer"],
+      "when_to_use": "Designing or reviewing backend structure, app boundaries, schema, and migrations."
+    },
+    {
+      "name": "suite-api-contract-reviewer",
+      "file": "roles/suite-api-contract-reviewer.md",
+      "scope": "api-contract",
+      "risk": "medium",
+      "skills": ["nextjs-api-sync", "auth-jwt-cookie-session"],
+      "workflows": ["01-scaffold-fullstack-app", "02-setup-secure-auth"],
+      "handoff": ["suite-auth-security-reviewer", "suite-backend-architect", "suite-qa-release-gate"],
+      "when_to_use": "Adding/changing endpoints, wiring SSR vs CSR fetch, normalizing DRF errors, CSRF."
+    },
+    {
+      "name": "suite-auth-security-reviewer",
+      "file": "roles/suite-auth-security-reviewer.md",
+      "scope": "security",
+      "risk": "high",
+      "skills": ["auth-jwt-cookie-session"],
+      "workflows": ["02-setup-secure-auth"],
+      "handoff": ["suite-api-contract-reviewer", "suite-devops-platform", "suite-qa-release-gate"],
+      "when_to_use": "Any change touching cookies, tokens, OTP, permissions, CORS/CSRF, secrets, or PII."
+    },
+    {
+      "name": "suite-data-cache-engineer",
+      "file": "roles/suite-data-cache-engineer.md",
+      "scope": "data-concurrency",
+      "risk": "medium",
+      "skills": ["domain-ecommerce-cart", "django-core-architecture"],
+      "workflows": ["03-enable-cart-feature"],
+      "handoff": ["suite-api-contract-reviewer", "suite-devops-platform", "suite-qa-release-gate"],
+      "when_to_use": "Cart mutations, guest merging, stock validation, Redis key design, indexes, migrations under load."
+    },
+    {
+      "name": "suite-frontend-integrator",
+      "file": "roles/suite-frontend-integrator.md",
+      "scope": "frontend",
+      "risk": "medium",
+      "skills": ["nextjs-api-sync", "auth-jwt-cookie-session", "domain-ecommerce-cart"],
+      "workflows": ["01-scaffold-fullstack-app", "03-enable-cart-feature"],
+      "handoff": ["suite-api-contract-reviewer", "suite-data-cache-engineer", "suite-devops-platform"],
+      "when_to_use": "Pages, layouts, client components, Zustand stores, async UI states, RSC/client boundary."
+    },
+    {
+      "name": "suite-devops-platform",
+      "file": "roles/suite-devops-platform.md",
+      "scope": "platform",
+      "risk": "medium",
+      "skills": ["django-docker-scaffold", "django-core-architecture"],
+      "workflows": ["01-scaffold-fullstack-app"],
+      "handoff": ["suite-data-cache-engineer", "suite-auth-security-reviewer", "suite-qa-release-gate"],
+      "when_to_use": "Dockerfiles, compose services, entrypoints, nginx, healthchecks, env wiring, secrets."
+    },
+    {
+      "name": "suite-qa-release-gate",
+      "file": "roles/suite-qa-release-gate.md",
+      "scope": "verification",
+      "risk": "high",
+      "skills": ["django-docker-scaffold", "auth-jwt-cookie-session", "domain-ecommerce-cart", "nextjs-api-sync"],
+      "workflows": ["01-scaffold-fullstack-app", "02-setup-secure-auth", "03-enable-cart-feature"],
+      "handoff": [],
+      "when_to_use": "Before any 'done', merge, or release. Has veto power over other roles."
+    }
+  ]
+}

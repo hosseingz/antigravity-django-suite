@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0.0",
+  "source": "roles/registry.json",
+  "note": "Phase -> owning role for each workflow. Phase ids are stable labels, not necessarily a 1:1 mapping to every heading in the workflow document. Read the workflow first, then this roster.",
+  "guardrail": ".agent/rules/role-delegation.md",
+  "rosters": {
+    "01-scaffold-fullstack-app": {
+      "goal": "Greenfield Django + DRF + Next.js + Docker project that boots and passes the gate.",
+      "phases": [
+        {
+          "id": "container-topology",
+          "owner": "suite-devops-platform",
+          "support": [],
+          "skills": ["django-docker-scaffold"],
+          "exit_evidence": "docker compose config exits 0; only the proxy publishes ports; entrypoints end with exec \"$@\"."
+        },
+        {
+          "id": "backend-core",
+          "owner": "suite-backend-architect",
+          "support": ["suite-devops-platform"],
+          "skills": ["django-core-architecture"],
+          "exit_evidence": "config/ namespace in place; apps registered un-prefixed; /api/health/ returns success."
+        },
+        {
+          "id": "api-synchronization",
+          "owner": "suite-api-contract-reviewer",
+          "support": ["suite-frontend-integrator"],
+          "skills": ["nextjs-api-sync"],
+          "exit_evidence": "SSR fetch uses the internal host; CSR uses the public base URL; apiClient is absent from server files."
+        },
+        {
+          "id": "boot-and-verify",
+          "owner": "suite-qa-release-gate",
+          "support": ["suite-devops-platform", "suite-backend-architect"],
+          "skills": ["django-docker-scaffold", "django-core-architecture"],
+          "exit_evidence": "Stack boots from a documented command on a clean machine; health probe green; verification report attached."
+        }
+      ]
+    },
+    "02-setup-secure-auth": {
+      "goal": "Dual HttpOnly cookie auth with OTP, enforced by middleware and permission classes.",
+      "phases": [
+        {
+          "id": "auth-backend",
+          "owner": "suite-auth-security-reviewer",
+          "support": ["suite-backend-architect"],
+          "skills": ["auth-jwt-cookie-session"],
+          "exit_evidence": "Cookie flags verified; refresh rotates; logout revokes; permission_classes present on every view."
+        },
+        {
+          "id": "auth-frontend",
+          "owner": "suite-frontend-integrator",
+          "support": ["suite-api-contract-reviewer"],
+          "skills": ["auth-jwt-cookie-session", "nextjs-api-sync"],
+          "exit_evidence": "Middleware distinguishes missing vs expired access; no token in JS; single-flight refresh demonstrated."
+        },
+        {
+          "id": "auth-verification",
+          "owner": "suite-qa-release-gate",
+          "support": ["suite-auth-security-reviewer"],
+          "skills": ["auth-jwt-cookie-session"],
+          "exit_evidence": "Login -> refresh -> logout exercised end to end with captured requests; OTP lockout demonstrated."
+        }
+      ]
+    },
+    "03-enable-cart-feature": {
+      "goal": "Redis-backed cart with guest identity, atomic mutations, and merge-on-login.",
+      "phases": [
+        {
+          "id": "cart-engine",
+          "owner": "suite-data-cache-engineer",
+          "support": ["suite-backend-architect"],
+          "skills": ["domain-ecommerce-cart"],
+          "exit_evidence": "Every mutation is atomic (primitive named); key TTLs and ownership documented; merge is idempotent."
+        },
+        {
+          "id": "cart-api",
+          "owner": "suite-api-contract-reviewer",
+          "support": ["suite-data-cache-engineer"],
+          "skills": ["nextjs-api-sync", "domain-ecommerce-cart"],
+          "exit_evidence": "Cart endpoints match client calls; guest header contract documented; cache-prevention headers present."
+        },
+        {
+          "id": "cart-frontend",
+          "owner": "suite-frontend-integrator",
+          "support": ["suite-data-cache-engineer"],
+          "skills": ["domain-ecommerce-cart", "nextjs-api-sync"],
+          "exit_evidence": "Guest UUID survives reload; monotonic guard in place; merge-on-login visible in the UI."
+        },
+        {
+          "id": "cart-verification",
+          "owner": "suite-qa-release-gate",
+          "support": ["suite-data-cache-engineer", "suite-frontend-integrator"],
+          "skills": ["domain-ecommerce-cart"],
+          "exit_evidence": "Double-submit cannot corrupt the cart; guest cart merges once; stock failure paths exercised."
+        }
+      ]
+    }
+  }
+}
