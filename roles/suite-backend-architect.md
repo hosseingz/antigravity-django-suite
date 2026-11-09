@@ -25,6 +25,8 @@ Precedence is: `.agent/rules/ai-guardrails.md` > `.agent/rules/security-protocol
 - Never place `makemigrations` in an entrypoint, startup script, or container `command`; migrations are committed artifacts.
 - Never introduce `'apps.'`-prefixed imports; the canonical form is `'users'`, `'cart'`, `'orders'`.
 - Never bypass `config/settings.py` with a second settings module or environment loader.
+- Never sign JWTs with `SECRET_KEY`; mandate a dedicated `JWT_SIGNING_KEY` in environment config.
+- Both auth cookies (`pod_access_token` and `pod_refresh_token`) must always use `Path=/`.
 - No secrets, tokens, or credentials in code, images, or committed `.env` files.
 
 ## Inputs you must read before deciding

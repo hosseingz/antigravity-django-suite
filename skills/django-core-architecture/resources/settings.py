@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(BASE_DIR, "apps"))
 env = environ.Env(
     DEBUG=(bool, False),
     SECRET_KEY=(str, ""),
+    JWT_SIGNING_KEY=(str, ""),
     ENVIRONMENT=(str, "production"),
     ALLOWED_HOSTS=(list, []),
     CORS_ALLOWED_ORIGINS=(list, []),
@@ -45,6 +46,13 @@ if not SECRET_KEY and not DEBUG:
     raise ValueError("FATAL: SECRET_KEY environment variable must be set in non-debug environments.")
 elif not SECRET_KEY:
     SECRET_KEY = "django-insecure-development-fallback-key-do-not-use-in-production"
+
+# Dedicated JWT Signing Key (Cryptographic Separation: Never reuse SECRET_KEY)
+JWT_SIGNING_KEY = env("JWT_SIGNING_KEY")
+if not JWT_SIGNING_KEY and not DEBUG:
+    raise ValueError("FATAL: JWT_SIGNING_KEY environment variable must be set in non-debug environments.")
+elif not JWT_SIGNING_KEY:
+    JWT_SIGNING_KEY = "django-insecure-jwt-signing-fallback-key-never-use-in-production"
 
 # Dynamic host resolution
 raw_allowed_hosts = env("ALLOWED_HOSTS")

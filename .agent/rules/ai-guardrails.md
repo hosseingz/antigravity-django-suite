@@ -32,13 +32,21 @@ These guardrails enforce zero-hallucination, production-ready patterns across al
 
 ---
 
-## 4. Authentication & JWT Storage Standard
-- **Rule**: JSON Web Tokens (Access and Refresh) must NEVER be stored in browser `localStorage`, `sessionStorage`, or JavaScript-accessible memory objects across client-rendered apps.
-- **Rationale**: Storing credentials in `localStorage` leaves tokens completely exposed to Cross-Site Scripting (XSS) extraction.
+## 4. Authentication, JWT Lifecycle & Cookie Storage Standard
+- **Rule**: Authentication across Django REST Framework and client applications (e.g., Next.js App Router) must enforce strict cryptographic isolation, deterministic lifecycle management, and full client-server alignment:
+  - **No Web Storage**: JSON Web Tokens (Access and Refresh) must NEVER be stored in browser `localStorage`, `sessionStorage`, or JavaScript-accessible memory objects.
+  - **Unified Cookie Scope (`Path=/`)**: The cookie path for BOTH `pod_access_token` and `pod_refresh_token` MUST be explicitly configured to `/`. Restricting the refresh cookie path to specific auth endpoints (e.g., `/api/auth/`) is strictly prohibited, as it breaks Next.js Edge route guards (`middleware.ts`) and SSR session checks.
+  - **Mandatory Unique Token Identifiers (`jti`)**: Every generated JWT payload (access and refresh) MUST include a unique cryptographically random `jti` (JWT ID) claim to mitigate replay attacks and enable deterministic server-side revocation.
+  - **Stateful Refresh Token Rotation (RTR)**: Refresh tokens must NEVER be purely stateless. Applications must use a persistent data store or fast cache (e.g., Redis or database) to track token lineage, enforce single-use rotation upon refresh, and detect token reuse attacks (which must immediately revoke all tokens in the lineage).
+  - **Deterministic Client-Side Eviction**: On logout and session expiration, the server must invalidate the token in the backend cache/blacklist AND instruct the browser to purge cookies by issuing explicit `Set-Cookie` eviction headers with `Max-Age=0` and past expiration (`Expires=Thu, 01 Jan 1970 00:00:00 GMT`) for `Path=/`.
+  - **Cryptographic Key Separation**: Signing JWTs using the framework's core `SECRET_KEY` is strictly prohibited. Applications must define and use a dedicated `JWT_SIGNING_KEY` (or asymmetric key pair such as `RS256`/`EdDSA`).
+  - **Cookie-Authenticated CSRF Protection**: State-changing requests (POST, PUT, PATCH, DELETE) that authenticate via cookies must enforce robust CSRF countermeasures (e.g., DRF CSRFCheck verification).
+- **Rationale**: Storing tokens in `localStorage` leaves credentials vulnerable to XSS theft. Stateless refresh tokens cannot be revoked upon logout or breach. Restricting cookie paths causes premature eviction in frontend route middleware. Sharing `SECRET_KEY` couples JWT validation to core framework signing security.
 - **Enforcement**:
-  - Refresh tokens must be stored exclusively in `HttpOnly`, `Secure`, `SameSite=Lax` (or `Strict`) cookies.
-  - Short-lived Access tokens should either be handled via server-mediated session proxies or short-lived in-memory state refreshed via HttpOnly cookie rotation endpoints.
-  - Revocation and rotation mechanisms must be enforced server-side.
+  - `CookieJWTAuthentication` must verify token `jti` against the Redis blacklist and enforce CSRF checks on mutating requests when authenticated via cookies.
+  - `set_auth_cookies` and `clear_auth_cookies` must strictly use `path="/"`.
+  - Refresh endpoints must record old `jti` in Redis blacklist with TTL matching remaining token lifetime and issue new rotated pairs.
+  - Startup checks must fail if `JWT_SIGNING_KEY` is missing or identical to `SECRET_KEY`.
 
 ---
 

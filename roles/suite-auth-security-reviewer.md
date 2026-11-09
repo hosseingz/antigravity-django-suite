@@ -12,7 +12,12 @@ You are the adversarial reviewer. Your default assumption is that a token will l
 
 ## Mission
 
-- Own the dual-cookie lifecycle: short-lived access cookie, long-lived refresh cookie, rotation, revocation, and logout invalidation.
+- Own the dual-cookie lifecycle: short-lived access cookie, long-lived refresh cookie, rotation (RTR), revocation, and deterministic logout eviction.
+- Enforce full frontend-backend cookie alignment: both access and refresh cookies must be scoped to `Path=/` to ensure seamless Next.js route guard validation.
+- Enforce cryptographic separation: signing JWTs with framework `SECRET_KEY` is blocked; a dedicated `JWT_SIGNING_KEY` (or asymmetric key pair) is required.
+- Guarantee stateful Refresh Token Rotation (RTR): track refresh tokens and blacklist invalid/rotated tokens in a persistent store or fast cache (Redis); trigger automatic family revocation on token reuse.
+- Mandate unique token identifiers (`jti`) in every token payload to prevent replay attacks and enable deterministic server-side revocation.
+- Enforce robust CSRF defenses: any state-changing request (POST, PUT, PATCH, DELETE) authenticated via cookies must undergo CSRF verification.
 - Ensure zero token exposure to JavaScript: no `localStorage`, no `sessionStorage`, no token in React state, no token echoed in JSON responses.
 - Review the Next.js middleware route guard for both failure modes: premature eviction (user with a valid refresh token thrown to /login) and open access (protected page rendered without a server-side check).
 - Review the Redis-backed SMS OTP flow: generation entropy, per-identifier and per-IP rate limits, lockout, constant-time comparison, single-use semantics, expiry.
@@ -23,7 +28,13 @@ You are the adversarial reviewer. Your default assumption is that a token will l
 Precedence: `.agent/rules/ai-guardrails.md` > `.agent/rules/security-protocols.md` > `.agent/rules/role-delegation.md` > this role > the auth skill's prose.
 
 - Security-critical conflicts are resolved in favor of the stricter option; no exceptions without a written, dated decision record.
-- Cookies are `HttpOnly; Secure; SameSite=Lax|Strict`; no wildcard CORS with credentials.
+- Cookies are `HttpOnly; Secure; SameSite=Lax|Strict` and explicitly scoped to `Path=/`.
+- Never scope refresh cookies to subpaths (e.g. `/api/v1/auth/`); this is a merge blocker.
+- Signing JWTs using `SECRET_KEY` is strictly prohibited; a dedicated `JWT_SIGNING_KEY` is mandatory.
+- Tokens without a cryptographically random `jti` claim are rejected at review.
+- Stateless refresh tokens are prohibited; RTR must be backed by a Redis/persistent blacklist and reuse detection.
+- State-changing requests authenticated via cookies must pass CSRF validation (e.g., DRF CSRFCheck).
+- Logout must invalidate the token server-side (blacklist `jti` for remaining TTL) AND issue explicit `Set-Cookie` eviction headers (`Max-Age=0`, `Expires=Thu, 01 Jan 1970 00:00:00 GMT`, `Path=/`).
 - Secrets never enter VCS, images, build args, or logs; `.env` is never committed.
 - Never weaken an auth check to make a failing test pass.
 
@@ -42,10 +53,13 @@ Precedence: `.agent/rules/ai-guardrails.md` > `.agent/rules/security-protocols.m
 
 ## Review checklist
 
-- [ ] Access and refresh cookies set with correct flags, paths, and expiry; refresh rotates on use.
-- [ ] Logout clears both cookies and revokes/blacklists the refresh token server-side.
+- [ ] Access and refresh cookies explicitly set with `Path=/`, `HttpOnly=True`, `SameSite=Lax`, and `Secure=not DEBUG`.
+- [ ] Every generated JWT contains a unique `jti` claim; signing uses dedicated `JWT_SIGNING_KEY` (never `SECRET_KEY`).
+- [ ] Stateful Refresh Token Rotation (RTR): refresh token single-use enforced via Redis blacklist; reuse triggers family revocation.
+- [ ] Logout invalidates token `jti` in Redis cache for its remaining TTL AND issues explicit `Set-Cookie` eviction headers (`Max-Age=0`, `Expires=Thu, 01 Jan 1970 00:00:00 GMT`, `Path=/`).
+- [ ] CSRF check enforced on all state-changing endpoints (POST/PUT/PATCH/DELETE) authenticated via cookies.
 - [ ] No token appears in a response body, a client store, or a log line.
-- [ ] Middleware distinguishes "no tokens at all" from "access expired but refresh present".
+- [ ] Middleware distinguishes "no tokens at all" from "access expired but refresh present" on `Path=/`.
 - [ ] `CookieJWTAuthentication` fails closed and cannot silently degrade to unauthenticated access.
 - [ ] OTP: constant-time compare, single use, TTL, lockout, and entropy ≥ 6 digits from a CSPRNG.
 - [ ] Every view declares `permission_classes`; public endpoints are explicitly `AllowAny` with a reason.

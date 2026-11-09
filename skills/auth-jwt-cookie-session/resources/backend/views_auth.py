@@ -36,7 +36,21 @@ ACCESS_COOKIE_NAME = "pod_access_token"
 REFRESH_COOKIE_NAME = "pod_refresh_token"
 ACCESS_TOKEN_LIFETIME = getattr(settings, "AUTH_ACCESS_TOKEN_LIFETIME_SECONDS", 900)  # 15 minutes
 REFRESH_TOKEN_LIFETIME = getattr(settings, "AUTH_REFRESH_TOKEN_LIFETIME_SECONDS", 604800)  # 7 days
-JWT_ALGORITHM = "HS256"
+JWT_ALGORITHM = getattr(settings, "JWT_ALGORITHM", "HS256")
+
+
+def get_jwt_signing_key() -> str:
+    """
+    Retrieves the dedicated JWT signing key. Reusing SECRET_KEY is strictly prohibited.
+    """
+    key = getattr(settings, "JWT_SIGNING_KEY", "")
+    if not key:
+        logger.critical("FATAL: JWT_SIGNING_KEY is unconfigured. Never use Django core SECRET_KEY.")
+        raise exceptions.AuthenticationFailed(
+            detail={"detail": "Server security configuration error.", "code": "server_misconfigured"},
+            code="server_misconfigured",
+        )
+    return key
 
 
 # ---------------------------------------------------------------------------
@@ -45,9 +59,10 @@ JWT_ALGORITHM = "HS256"
 
 def create_jwt_token(user: AbstractBaseUser, token_type: str, lifetime_seconds: int) -> str:
     """
-    Creates a signed HS256 JSON Web Token with claims for user identification and type.
+    Creates a signed JWT with unique jti, claims for user identification, and dedicated signing key.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
+    signing_key = get_jwt_signing_key()
     payload = {
         "user_id": user.pk,
         "type": token_type,
@@ -55,7 +70,7 @@ def create_jwt_token(user: AbstractBaseUser, token_type: str, lifetime_seconds: 
         "exp": int((now + datetime.timedelta(seconds=lifetime_seconds)).timestamp()),
         "jti": secrets.token_hex(16),
     }
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, signing_key, algorithm=JWT_ALGORITHM)
 
 
 def issue_token_pair(user: AbstractBaseUser) -> tuple[str, str]:
@@ -78,16 +93,11 @@ def set_auth_cookies(
 ) -> Response:
     """
     Attaches secure HttpOnly cookies to the outgoing DRF Response.
-
-    Cookie Security Attributes:
-    - httponly=True: Prevents JavaScript access via `document.cookie` (mitigates XSS token extraction).
-    - secure=not settings.DEBUG: Requires TLS in production; permits plain HTTP on localhost during dev.
-    - samesite="Lax": Protects against Cross-Site Request Forgery (CSRF) on cross-site requests.
-    - path="/": Available across all API and SSR routes.
+    Mandatory Alignment: Both cookies MUST use path="/" for Next.js route guard compatibility.
     """
     secure_flag = not getattr(settings, "DEBUG", False)
 
-    # 1. Access Token Cookie (Short-lived)
+    # 1. Access Token Cookie (Short-lived, Path=/)
     response.set_cookie(
         key=ACCESS_COOKIE_NAME,
         value=access_token,
@@ -98,7 +108,7 @@ def set_auth_cookies(
         path="/",
     )
 
-    # 2. Refresh Token Cookie (Long-lived)
+    # 2. Refresh Token Cookie (Long-lived, Path=/)
     if refresh_token is not None:
         response.set_cookie(
             key=REFRESH_COOKIE_NAME,
@@ -115,7 +125,7 @@ def set_auth_cookies(
 
 def clear_auth_cookies(response: Response) -> Response:
     """
-    Evicts authentication state by expiring cookie headers with Max-Age=0.
+    Evicts authentication state deterministically on Path=/ using Max-Age=0 and past Expires.
     """
     secure_flag = not getattr(settings, "DEBUG", False)
 
@@ -125,7 +135,7 @@ def clear_auth_cookies(response: Response) -> Response:
             path="/",
             samesite="Lax",
         )
-        # Explicit zero-age header safeguard
+        # Deterministic past-expiration header safeguard
         response.set_cookie(
             key=cookie_name,
             value="",
@@ -203,9 +213,10 @@ class LoginAPIView(APIView):
 
 class RefreshTokenView(APIView):
     """
-    Performs silent background token refresh.
-    Reads `pod_refresh_token` from HttpOnly cookies, verifies signature, rotates access
-    token (and optionally refresh token), and sets updated cookies on the response.
+    Performs silent background token refresh with stateful Refresh Token Rotation (RTR).
+    Reads `pod_refresh_token` from HttpOnly cookies, verifies signature against dedicated
+    JWT_SIGNING_KEY, validates unique `jti`, detects token reuse, blacklists the old token
+    in Redis, and issues a freshly rotated token pair on Path=/.
     """
     permission_classes = [AllowAny]
 
@@ -219,10 +230,12 @@ class RefreshTokenView(APIView):
             )
             return clear_auth_cookies(response)
 
+        signing_key = get_jwt_signing_key()
+
         try:
             payload = jwt.decode(
                 refresh_raw,
-                settings.SECRET_KEY,
+                signing_key,
                 algorithms=[JWT_ALGORITHM],
                 options={"verify_exp": True, "verify_signature": True},
             )
@@ -248,7 +261,40 @@ class RefreshTokenView(APIView):
             )
             return clear_auth_cookies(response)
 
+        jti = payload.get("jti")
+        if not jti:
+            logger.warning("Refresh token lacks required 'jti' identifier.")
+            response = Response(
+                {"detail": "Malformed token payload.", "code": "token_malformed"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            return clear_auth_cookies(response)
+
         user_id = payload.get("user_id") or payload.get("sub")
+
+        # Refresh Token Rotation (RTR): Check if this token was already rotated/revoked
+        if cache.get(f"jwt:blacklist:{jti}"):
+            logger.critical(
+                "SECURITY ALERT: Refresh token reuse detected! jti=%s for user_id=%s. Revoking session family.",
+                jti,
+                user_id,
+            )
+            # Evict entire token lineage for this user
+            cache.set(f"jwt:user_revoked:{user_id}", True, timeout=REFRESH_TOKEN_LIFETIME)
+            response = Response(
+                {"detail": "Token reuse detected. All active sessions invalidated.", "code": "token_reuse_detected"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            return clear_auth_cookies(response)
+
+        if cache.get(f"jwt:user_revoked:{user_id}"):
+            logger.warning("Revoked user session attempted token refresh: user_id=%s", user_id)
+            response = Response(
+                {"detail": "Session has been terminated. Please log in again.", "code": "session_terminated"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            return clear_auth_cookies(response)
+
         user = User.objects.filter(pk=user_id, is_active=True).first()
         if user is None:
             response = Response(
@@ -257,7 +303,13 @@ class RefreshTokenView(APIView):
             )
             return clear_auth_cookies(response)
 
-        # Issue fresh token pair (Rotation on refresh)
+        # Blacklist the consumed refresh token jti for its remaining TTL in Redis
+        now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        exp_ts = payload.get("exp", now_ts + REFRESH_TOKEN_LIFETIME)
+        remaining_ttl = max(int(exp_ts - now_ts), 60)
+        cache.set(f"jwt:blacklist:{jti}", "rotated", timeout=remaining_ttl)
+
+        # Issue fresh token pair (Rotation on refresh with new jtis)
         new_access_token, new_refresh_token = issue_token_pair(user)
 
         response = Response(
@@ -272,11 +324,32 @@ class RefreshTokenView(APIView):
 
 class LogoutAPIView(APIView):
     """
-    Clears HttpOnly authentication cookies and logs out the current session.
+    Clears HttpOnly authentication cookies deterministically and blacklists
+    the presented refresh token in Redis for its remaining TTL.
     """
     permission_classes = [AllowAny]
 
     def post(self, request: Request) -> Response:
+        refresh_raw = request.COOKIES.get(REFRESH_COOKIE_NAME)
+        if refresh_raw:
+            signing_key = getattr(settings, "JWT_SIGNING_KEY", "")
+            try:
+                payload = jwt.decode(
+                    refresh_raw,
+                    signing_key,
+                    algorithms=[JWT_ALGORITHM],
+                    options={"verify_exp": False, "verify_signature": True},
+                )
+                jti = payload.get("jti")
+                if jti:
+                    now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+                    exp_ts = payload.get("exp", now_ts + REFRESH_TOKEN_LIFETIME)
+                    remaining_ttl = max(int(exp_ts - now_ts), 60)
+                    cache.set(f"jwt:blacklist:{jti}", "logout", timeout=remaining_ttl)
+                    logger.info("Blacklisted refresh token jti=%s on logout.", jti)
+            except Exception as exc:
+                logger.debug("Could not decode refresh token during logout blacklisting: %s", exc)
+
         response = Response(
             {"detail": "Logged out successfully."},
             status=status.HTTP_200_OK,

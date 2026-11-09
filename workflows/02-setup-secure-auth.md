@@ -72,9 +72,14 @@ cp skills/auth-jwt-cookie-session/resources/backend/authentication.py backend/ap
 ```
 
 #### 1.3 Configure Django Settings
-Update `backend/config/settings.py` to register `CookieJWTAuthentication` as the default authentication class:
+Update `backend/config/settings.py` to register dedicated cryptographic keys and `CookieJWTAuthentication`:
 ```python
 # backend/config/settings.py
+
+# Cryptographic Separation: Never reuse Django core SECRET_KEY for signing JWTs
+JWT_SIGNING_KEY = env('JWT_SIGNING_KEY')
+if not JWT_SIGNING_KEY and not DEBUG:
+    raise ValueError('FATAL: JWT_SIGNING_KEY environment variable must be set in production.')
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -86,13 +91,13 @@ REST_FRAMEWORK = {
     ],
 }
 
-# Cookie Configuration for Dual-Token Authentication
+# Cookie Configuration for Dual-Token Authentication (Mandatory Path=/)
 AUTH_COOKIE_ACCESS = 'pod_access_token'
 AUTH_COOKIE_REFRESH = 'pod_refresh_token'
 AUTH_COOKIE_SECURE = not DEBUG  # True in production HTTPS
 AUTH_COOKIE_HTTPONLY = True
 AUTH_COOKIE_SAMESITE = 'Lax'
-AUTH_COOKIE_PATH = '/'
+AUTH_COOKIE_PATH = '/'  # MUST be '/' for Next.js route guard compatibility
 AUTH_COOKIE_DOMAIN = env('AUTH_COOKIE_DOMAIN', default=None)
 
 # Token Lifetimes (Seconds)

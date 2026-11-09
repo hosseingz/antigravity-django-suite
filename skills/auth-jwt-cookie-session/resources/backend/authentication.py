@@ -17,8 +17,9 @@ import jwt
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.cache import cache
 from rest_framework import exceptions
-from rest_framework.authentication import BaseAuthentication
+from rest_framework.authentication import BaseAuthentication, CSRFCheck
 from rest_framework.request import Request
 
 logger = logging.getLogger(__name__)
@@ -30,27 +31,27 @@ class CookieJWTAuthentication(BaseAuthentication):
     Production-grade JWT authentication backend inspecting both headers and HttpOnly cookies.
 
     Authentication Strategy:
-    1. Authorization Header: `Bearer <jwt_token>`
-    2. HttpOnly Cookie: `pod_access_token`
+    1. Authorization Header: `Bearer <jwt_token>` (for mobile/API clients - bypasses CSRF)
+    2. HttpOnly Cookie: `pod_access_token` (for web browser clients - enforces CSRF on mutations)
 
-    AI Guardrail & Anti-Silent-Degradation Rules:
-    - If an access token is expired, MUST raise `exceptions.AuthenticationFailed` with code `token_expired`.
-    - If `pod_access_token` is missing or expired, but `pod_refresh_token` is present in cookies,
+    AI Guardrail & Security Rules:
+    - Dedicated Signing Key: Validates tokens exclusively against `settings.JWT_SIGNING_KEY`.
+    - Mandatory JTI: Every token must provide a unique `jti` claim.
+    - Stateful Revocation: Checks incoming `jti` against the Redis/cache blacklist.
+    - CSRF Protection: Enforces strict CSRF check for cookie-authenticated state-changing requests.
+    - Anti-Silent-Degradation: If an access token is expired, or if missing while refresh cookie exists,
       MUST raise `exceptions.AuthenticationFailed` with code `token_refresh_required` (HTTP 401).
-      This signals the client-side Axios interceptor to execute a background token refresh.
-    - If neither token is provided at all, returns `None` so unauthenticated/public endpoints
-      remain accessible while protected endpoints fail gracefully at the permission level.
     """
 
     ACCESS_COOKIE_NAME: str = "pod_access_token"
     REFRESH_COOKIE_NAME: str = "pod_refresh_token"
-    ALGORITHM: str = "HS256"
+    ALGORITHM: str = getattr(settings, "JWT_ALGORITHM", "HS256")
 
     def authenticate(self, request: Request) -> Optional[Tuple[AbstractBaseUser, dict[str, Any]]]:
         """
         Authenticates the incoming request, returning (user, token_payload) or None.
         """
-        raw_token: Optional[str] = self._extract_token(request)
+        raw_token, from_cookie = self._extract_token(request)
         has_refresh_cookie: bool = self.REFRESH_COOKIE_NAME in request.COOKIES
 
         if raw_token is None:
@@ -64,32 +65,53 @@ class CookieJWTAuthentication(BaseAuthentication):
             # Anonymous / unauthenticated request
             return None
 
-        return self._authenticate_credentials(raw_token, has_refresh_cookie)
+        return self._authenticate_credentials(request, raw_token, has_refresh_cookie, from_cookie)
 
-    def _extract_token(self, request: Request) -> Optional[str]:
+    def _extract_token(self, request: Request) -> Tuple[Optional[str], bool]:
         """
         Extracts the JWT from either the Authorization header or HttpOnly cookie.
         Header takes precedence for API clients / mobile apps.
+        Returns tuple: (raw_token, from_cookie)
         """
         # 1. Header lookup: Authorization: Bearer <token>
         auth_header = request.headers.get("Authorization") or request.META.get("HTTP_AUTHORIZATION")
         if auth_header:
             parts = auth_header.split()
             if len(parts) == 2 and parts[0].lower() == "bearer":
-                return parts[1]
+                return parts[1], False
 
         # 2. HttpOnly Cookie fallback: pod_access_token
-        return request.COOKIES.get(self.ACCESS_COOKIE_NAME)
+        cookie_token = request.COOKIES.get(self.ACCESS_COOKIE_NAME)
+        if cookie_token:
+            return cookie_token, True
+
+        return None, False
+
+    def enforce_csrf(self, request: Request) -> None:
+        """
+        Enforces CSRF validation for cookie-authenticated mutating requests.
+        """
+        check = CSRFCheck(lambda req: None)
+        check.process_request(request)
+        reason = check.process_view(request, None, (), {})
+        if reason:
+            logger.warning("CSRF validation failed for cookie-authenticated request: %s", reason)
+            raise exceptions.PermissionDenied(f"CSRF Failed: {reason}")
 
     def _authenticate_credentials(
-        self, raw_token: str, has_refresh_cookie: bool
+        self, request: Request, raw_token: str, has_refresh_cookie: bool, from_cookie: bool
     ) -> Tuple[AbstractBaseUser, dict[str, Any]]:
         """
-        Decodes and verifies the JWT payload against Django settings.SECRET_KEY.
+        Decodes and verifies the JWT payload against dedicated JWT_SIGNING_KEY,
+        checks jti against Redis blacklist, and enforces CSRF for cookie auth.
         """
-        secret_key: str = getattr(settings, "SECRET_KEY", "")
-        if not secret_key:
-            logger.critical("SECRET_KEY is empty or unconfigured during JWT validation.")
+        # Enforce CSRF check for cookie-authenticated state-changing requests
+        if from_cookie and request.method not in ("GET", "HEAD", "OPTIONS", "TRACE"):
+            self.enforce_csrf(request)
+
+        signing_key: str = getattr(settings, "JWT_SIGNING_KEY", "")
+        if not signing_key:
+            logger.critical("JWT_SIGNING_KEY is unconfigured. Never fallback to SECRET_KEY.")
             raise exceptions.AuthenticationFailed(
                 detail={"detail": "Server security configuration error.", "code": "server_misconfigured"},
                 code="server_misconfigured",
@@ -98,7 +120,7 @@ class CookieJWTAuthentication(BaseAuthentication):
         try:
             payload: dict[str, Any] = jwt.decode(
                 raw_token,
-                secret_key,
+                signing_key,
                 algorithms=[self.ALGORITHM],
                 options={"verify_exp": True, "verify_signature": True},
             )
@@ -123,6 +145,23 @@ class CookieJWTAuthentication(BaseAuthentication):
             raise exceptions.AuthenticationFailed(
                 detail={"detail": "Invalid token type.", "code": "invalid_token_type"},
                 code="invalid_token_type",
+            )
+
+        # Mandatory Token Identifier (jti) validation
+        jti = payload.get("jti")
+        if not jti:
+            logger.warning("JWT payload lacks required 'jti' claim.")
+            raise exceptions.AuthenticationFailed(
+                detail={"detail": "Token identifier claim missing.", "code": "token_jti_missing"},
+                code="token_jti_missing",
+            )
+
+        # Stateful Revocation check against Redis / Cache blacklist
+        if cache.get(f"jwt:blacklist:{jti}"):
+            logger.warning("Revoked token presented for authentication: jti=%s", jti)
+            raise exceptions.AuthenticationFailed(
+                detail={"detail": "Token has been revoked or invalidated.", "code": "token_revoked"},
+                code="token_revoked",
             )
 
         user_id = payload.get("user_id") or payload.get("sub")
