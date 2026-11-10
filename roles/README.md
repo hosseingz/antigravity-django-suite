@@ -88,12 +88,20 @@ mkdir -p "$PROJECT/.agents/agents" && cp roles/suite-*.md "$PROJECT/.agents/agen
 
 ## 4. How to use them while coding
 
-1. Pick the workflow (`workflows/01`, `02`, `03`) and open `workflows/rosters.json`.
-2. Activate the role that owns the current phase, by exact name (e.g. "Use the suite-auth-security-reviewer role to review this change").
-3. Require the role's deliverables before moving to the next phase; hand off with the role named in its `## Handoff` section.
-4. Close the workflow with `suite-qa-release-gate`: no evidence, no "done".
+You can interact with the agent naturally or invoke roles explicitly:
 
-Roles are intentionally narrow. If a task spans two roles, run them as two passes (one reviews, the other implements) instead of merging them into one broad prompt — that separation is the point.
+1. **Natural Interaction & Auto-Routing**:
+   - **Inquiries**: Ask questions or brainstorm without fear of unexpected code changes.
+   - **Fast-Track Tasks**: For trivial or single-file fixes, the agent auto-selects the owning role and executes immediately.
+   - **Features & Multi-step Tasks**: The agent presents a phase blueprint with the owning roles and skills before writing code, asking only blocking architectural questions if needed.
+2. **Explicit Activation**:
+   - You can always specify a role directly: *"Use the `suite-backend-architect` role to design the category schema."*
+   - The agent announces its active persona with `[Active Role: suite-<role-name>]`.
+3. **Sequential Execution & Handoff**:
+   - For multi-phase workflows, work is done in sequential passes (e.g. Architect → Contract Reviewer → Frontend Integrator).
+   - Each phase delivers verifiable artifacts before handing off.
+4. **Final Gate**:
+   - Close every feature with `suite-qa-release-gate`: no reproducible test or execution evidence, no "done".
 
 ## 5. Updating
 

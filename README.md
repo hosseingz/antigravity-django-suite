@@ -183,6 +183,12 @@ All skills and workflows adhere strictly to the repository guardrail policies:
   - Requires credentials pairing (`CORS_ALLOW_CREDENTIALS = True`) with explicit origins.
   - Enforces zero secrets in VCS or Docker cache layers.
 
+- **[Role Delegation & Prompt Triage Protocol](.agent/rules/role-delegation.md)**:
+  - Automatically triages prompts into Inquiries, Fast-track actions, or Plan-gated multi-step tasks.
+  - Auto-routes tasks to the owning specialist role (`suite-*`) without requiring manual role name typing.
+  - Generates structured phase blueprints for review before multi-file feature implementation.
+  - Enforces strict guardrail precedence over any role persona.
+
 ---
 
 ## Repository Layout
@@ -192,7 +198,21 @@ antigravity-django-suite/
 ├── .agent/
 │   └── rules/
 │       ├── ai-guardrails.md           # Zero-hallucination architectural constraints
+│       ├── role-delegation.md         # Prompt triage, auto-routing & precedence rules
 │       └── security-protocols.md      # Container, CORS, CSRF, and secret protocols
+├── roles/                             # Specialized stack agent definitions & registry
+│   ├── suite-backend-architect.md     # Django/DRF models, boundaries, migrations
+│   ├── suite-api-contract-reviewer.md # Endpoint sync, dual networking, error normalization
+│   ├── suite-auth-security-reviewer.md# Cookie lifecycle, OTP, route guards
+│   ├── suite-data-cache-engineer.md   # Redis cart atomicity, guest merge, indexing
+│   ├── suite-frontend-integrator.md   # Next.js RSC/Client boundaries, Zustand stores
+│   ├── suite-devops-platform.md       # Docker, compose, nginx proxy, healthchecks
+│   ├── suite-qa-release-gate.md       # Evidence-based definition of done & veto
+│   ├── registry.json                  # Machine-readable role catalog metadata
+│   └── NOTICE.md                      # MIT upstream attribution
+├── scripts/
+│   ├── install-suite.ps1              # Full suite installer (roles, skills, rules, workflows)
+│   └── install-roles.ps1              # Role-only installer with SHA256 tracking
 ├── skills/
 │   ├── django-docker-scaffold/        # Docker Compose, Dockerfiles, entrypoint
 │   ├── django-core-architecture/      # config/ layout, syspath, django-environ
@@ -202,7 +222,8 @@ antigravity-django-suite/
 ├── workflows/
 │   ├── 01-scaffold-fullstack-app.md   # Runbook: Greenfield fullstack spin-up
 │   ├── 02-setup-secure-auth.md        # Runbook: Turnkey HttpOnly auth integration
-│   └── 03-enable-cart-feature.md      # Runbook: High-concurrency cart injection
+│   ├── 03-enable-cart-feature.md      # Runbook: High-concurrency cart injection
+│   └── rosters.json                   # Workflow phase to role ownership mapping
 ├── antigravity-django-suite-roadmap.md # Master project roadmap & completion tracker
 ├── LICENSE                            # MIT License
 └── README.md                          # Repository documentation & registration guide
