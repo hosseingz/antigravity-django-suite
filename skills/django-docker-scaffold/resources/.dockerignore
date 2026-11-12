@@ -57,8 +57,19 @@ Thumbs.db
 *.sqlite3-journal
 logs/
 *.log
-static/
-media/
+
+# Collected output only — STATIC_ROOT / MEDIA_ROOT are volume targets.
+# Never ignore the source directories wholesale: backend/static/.gitkeep is
+# tracked and the image pre-creates /src/static and /src/media.
+backend/static/*
+!backend/static/.gitkeep
+backend/media/*
+!backend/media/.gitkeep
+backend/staticfiles/
+
+# Antigravity Agent Working State (Prevent Prompt & Transcript Leakage)
+.agents/
+.agent/
 
 # Node & Frontend Build Artifacts (if context is root)
 node_modules/

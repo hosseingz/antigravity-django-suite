@@ -62,11 +62,12 @@ This workflow automates the greenfield scaffolding of an enterprise-grade fullst
    - `docker-compose.yml` -> `./docker-compose.yml`
    - `docker-compose.override.yml` -> `./docker-compose.override.yml`
    - `nginx.conf` -> `nginx/nginx.conf`
-   - `.dockerignore` -> `./.dockerignore`
+   - `.dockerignore` -> `./.dockerignore`, `backend/.dockerignore`, and `frontend/.dockerignore`
    - `.env.example` -> `./.env.example`
    - `Dockerfile.backend` -> `backend/Dockerfile`
    - `Dockerfile.frontend` -> `frontend/Dockerfile`
    - `entrypoint.sh` -> `backend/entrypoint.sh`
+   - Ensure `frontend/public/.gitkeep` exists (`mkdir -p frontend/public && touch frontend/public/.gitkeep`).
 
 3. **Initialize Environment Variables**:
    ```bash

@@ -22,9 +22,9 @@ x-backend-base: &backend-base
   environment:
     POSTGRES_HOST: db
     POSTGRES_PORT: 5432
-    REDIS_URL: redis://redis:6379/1
-    CELERY_BROKER_URL: redis://redis:6379/0
-    CELERY_RESULT_BACKEND: redis://redis:6379/0
+    REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+    CELERY_BROKER_URL: ${CELERY_BROKER_URL:?CELERY_BROKER_URL is required}
+    CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?CELERY_RESULT_BACKEND is required}
     INTERNAL_API_BASE_URL: http://backend:8000
     DJANGO_SETTINGS_MODULE: config.settings
 
@@ -62,13 +62,13 @@ services:
     logging: *default-logging
     networks:
       - internal_net
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-redispassword}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     volumes:
       - redis_data:/data
     expose:
       - "6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispassword}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -96,6 +96,8 @@ services:
   celery_worker:
     <<: *backend-base
     profiles: ["celery"]
+    environment:
+      RUN_BOOTSTRAP: "0"
     command: ["celery", "-A", "config", "worker", "--loglevel=INFO", "--concurrency=4"]
     depends_on:
       backend:
@@ -111,6 +113,8 @@ services:
   celery_beat:
     <<: *backend-base
     profiles: ["celery"]
+    environment:
+      RUN_BOOTSTRAP: "0"
     command: ["celery", "-A", "config", "beat", "--loglevel=INFO"]
     depends_on:
       backend:
@@ -125,6 +129,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: runner
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
     restart: unless-stopped
     logging: *default-logging
     networks:
@@ -132,11 +139,11 @@ services:
     environment:
       NODE_ENV: production
       INTERNAL_API_BASE_URL: http://backend:8000
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
     expose:
       - "3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   # ----------------------------------------------------------------------------
   # Edge Gateway & Reverse Proxy: Nginx

@@ -23,13 +23,40 @@ RUN \
 
 
 # ------------------------------------------------------------------------------
-# Stage 2: Build Application
+# Stage 2: Development Runtime (Dedicated for Hot-Reload Overlay)
+# ------------------------------------------------------------------------------
+FROM node:20-alpine AS dev
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=development
+
+COPY package.json package-lock.json* yarn.lock* pnpm-lock.yaml* ./
+RUN \
+  if [ -f yarn.lock ]; then yarn; \
+  elif [ -f package-lock.json ]; then npm install --no-audit --no-fund; \
+  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm install; \
+  else npm install; \
+  fi
+
+COPY . .
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
+
+
+# ------------------------------------------------------------------------------
+# Stage 3: Build Application
 # ------------------------------------------------------------------------------
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# Ensure public/ directory exists in builder to avoid COPY failure in runner
+RUN mkdir -p /app/public
 
 # Disable Next.js telemetry collection during build
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -45,7 +72,7 @@ RUN \
 
 
 # ------------------------------------------------------------------------------
-# Stage 3: Minimal Production Runtime
+# Stage 4: Minimal Production Runtime
 # ------------------------------------------------------------------------------
 FROM node:20-alpine AS runner
 WORKDIR /app

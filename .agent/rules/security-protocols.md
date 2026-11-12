@@ -11,6 +11,7 @@ This document defines mandatory security configurations and runtime controls acr
   - Set ownership on necessary application, media, static, and runtime cache directories (`chown -R appuser:appgroup /app`).
   - Explicitly switch to `USER appuser` prior to defining container `CMD` or executing runtime processes.
   - Development overrides must preserve user IDs to avoid host file permission collisions.
+  - **Host Permission Collision Mechanism**: Bind-mounted dev containers must resolve host-container UID mismatch by either (a) building with build args `ARG UID=1000 GID=1000` mapped to user/group creation, or (b) specifying `user: "${UID:-1000}:${GID:-1000}"` in the dev compose override. Running `chown -R` across a bind-mounted source tree is strictly prohibited (as it changes host file ownership and severely slows container boot); restrict container startup ownership adjustments strictly to `static/` and `media/`.
 
 ---
 
@@ -33,6 +34,9 @@ This document defines mandatory security configurations and runtime controls acr
 - **Zero Secrets in Code or Images**:
   - Secrets (`SECRET_KEY`, `JWT_SIGNING_KEY`, database passwords, Stripe/payment credentials, JWT private signing keys) must never be hardcoded, committed to Git, or baked into Docker images.
   - Docker build steps must not leak `.env` or credentials into intermediate cache layers.
+- **No Default Insecure Credentials in Orchestration**:
+  - Compose interpolation MUST NOT supply a working fallback for secrets. Patterns like `${REDIS_PASSWORD:-redispassword}` in `command:`, `environment:`, or healthcheck probes are prohibited. Use the fail-fast interpolation form `${REDIS_PASSWORD:?REDIS_PASSWORD is required}`.
+  - Each secret-bearing URL is defined in exactly one place (`.env`), not duplicated across services. `env_file` supplies credentials to backend processes; client-bundle variables (`NEXT_PUBLIC_*`) are build arguments, never runtime container secrets.
 - **Dedicated Cryptographic Signing Keys**:
   - Signing JSON Web Tokens (JWT) using the framework's core `SECRET_KEY` is strictly prohibited. Applications must configure a dedicated, isolated `JWT_SIGNING_KEY` (or asymmetric key pair `RS256`/`EdDSA`).
 - **Token Lifecycle & Statefulness**:
