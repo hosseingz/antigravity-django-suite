@@ -66,6 +66,56 @@ For full technical analysis, consult [`references/ssr-vs-csr-routing.md`](./refe
 
 ---
 
+## 2.5 Response & Error Contract (Normative)
+
+Success payloads are **never** wrapped (`{data: ...}` is strictly prohibited).
+
+### Collections Contract
+| Class | Response Shape | Ownership & Constraints |
+| :--- | :--- | :--- |
+| **Pageable Collections** (`/posts/`) | `{count, next, previous, results}` | Server owns pagination via `PageNumberPagination`. Client MUST render `count` and follow `next`/`previous` query params (`?page=2`). **Local client slicing (`.slice(0, 9)`) or re-pagination is prohibited.** |
+| **Bounded Lookup Collections** (`/categories/`, `/tags/`) | Bare array `[...]` | Allowed **only** via documented `pagination_class = None` allowlists (maximum ~100 items). |
+| **Nested / Action Collections** (`/posts/{slug}/comments/`) | Bare array `[...]` | Must be explicitly documented in the endpoint inventory. |
+| **Single Resource** (`/posts/{slug}/`) | Bare object `{...}` | Direct entity representation without wrappers. |
+| **State Mutations** (`/posts/{slug}/like/`) | Bare object `{...}` | Contains only changed fields (`{likes, has_liked}`). |
+
+> [!IMPORTANT]
+> **No Ambiguous Fallback Guessing**:
+> Client code MUST NOT use fallback patterns like `data.results || data || []`. The endpoint inventory dictates the exact contract shape; fallback guessing masks contract drift.
+
+### Canonical Field Naming
+- One name per concept across list, detail, and mutation views (`likes`, `bookmarks`, `comments_count`).
+- Serializer emitting `likes` while mutation emits `{likes, has_liked}` and client expects `likes_count` is a defect.
+- Domain fields MUST NOT be renamed on the client; rename only UI display strings (e.g., `publishDate`).
+
+### Standardized Error Contract
+All 4xx and 5xx responses conform to a 3-part contract:
+```json
+{
+  "detail": "Human-readable summary message.",
+  "code": "stable_snake_case_code",
+  "fields": {
+    "password": ["This password is too short."]
+  }
+}
+```
+- `detail`: Always a **string** (never a list, never absent). Code must never call `ValidationError({"detail": [...]})`.
+- `code`: Always present and stable (`validation_error`, `not_found`, `permission_denied`, `authentication_required`, `token_refresh_required`, `throttled`, `csrf_failed`).
+- `fields`: Present **only** on validation errors, keyed by write field name. Cross-field errors belong in `detail`. `fields` must never contain `detail`, `code`, or `non_field_errors`.
+
+### Status Matrix
+| Scenario | Status Code | Error `code` | Notes |
+| :--- | :--- | :--- | :--- |
+| Validation Failure | `400 Bad Request` | `validation_error` | Carries populated `fields` object |
+| Invalid Login Credentials | `400 Bad Request` | `invalid_credentials` | Documented exception: never triggers 401 refresh |
+| Missing / Expired Credential | `401 Unauthorized` | `authentication_required` / `token_refresh_required` | Only status triggering apiClient mutex refresh |
+| CSRF Failure | `403 Forbidden` | `csrf_failed` | PermissionDenied |
+| Forbidden Resource | `403 Forbidden` | `permission_denied` | Authenticated but lacks permissions |
+| Resource Not Found | `404 Not Found` | `not_found` | Missing entity |
+| Rate Limited | `429 Too Many Requests` | `throttled` | Includes `Retry-After` header |
+
+---
+
 ## 3. Single-Refresh Mutex Lock & CSRF Attachment
 
 ### 3.1 Single-Refresh Mutex Pattern
@@ -106,6 +156,16 @@ For mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`), `apiClient` automatica
   - *Risk*: Crashes with `document is not defined` and fails to forward user cookies from incoming requests.
   - *Solution*: Use `serverFetch.ts`, which extracts `cookies()` via `next/headers`.
 
+- **Anti-Pattern 5: Ad-hoc Field Renaming & Client-Side List Slicing**
+  - *Rule*: Never rename API fields on the client or slice paginated collections locally.
+  - *Risk*: Slicing `.slice(0, 9)` over page 1 means users never see items on page 2+; ad-hoc renaming causes `undefined` renders.
+  - *Solution*: Server owns pagination (`?page=`, `?search=`, `?category=`), client renders server-provided `count`, `next`, and `previous`.
+
+- **Anti-Pattern 6: Binding System/Non-Field Errors to Form Inputs**
+  - *Rule*: Non-field error keys (`detail`, `non_field_errors`, `code`) must never be mapped to individual form fields.
+  - *Risk*: Error is attached to a non-existent input (`input[name="detail"]`), leaving form alert banners empty.
+  - *Solution*: Filter out `NON_FIELD_KEYS` in `extractFieldErrors` and bind them exclusively to top-level alert banners via `extractNonFieldError`.
+
 ---
 
 ## 5. DRF Error Normalization
@@ -114,7 +174,8 @@ Django REST Framework generates diverse error formats (field arrays, `non_field_
 
 [`resources/errorUtils.ts`](./resources/errorUtils.ts) provides:
 - `extractErrorMessage(err)`: Returns the highest-priority human-readable message for toasts and banners.
-- `extractFieldErrors(err)`: Returns a structured `Record<string, string[]>` for direct binding to form libraries (e.g. React Hook Form).
+- `extractFieldErrors(err)`: Returns a structured `Record<string, string[]>` excluding non-field keys, for direct binding to form libraries.
+- `extractNonFieldError(err)`: Returns top-level non-field message for alert banners.
 
 For detailed breakdown, consult [`references/error-normalization.md`](./references/error-normalization.md).
 
@@ -124,10 +185,11 @@ For detailed breakdown, consult [`references/error-normalization.md`](./referenc
 
 The following production-grade TypeScript templates are available in [`resources/`](./resources):
 
-- [`apiConfig.ts`](./resources/apiConfig.ts): Dynamic base URL resolution and getter-based `API_ENDPOINTS` registry.
+- [`apiConfig.ts`](./resources/apiConfig.ts): Dynamic base URL resolution and getter-based `API_ENDPOINTS` registry with API versioning and local dev SSR fallback.
 - [`apiClient.ts`](./resources/apiClient.ts): Client-side Axios instance with single-refresh mutex lock and CSRF injection.
 - [`serverFetch.ts`](./resources/serverFetch.ts): Server-side RSC fetch utility with automatic Next.js cookie forwarding.
 - [`errorUtils.ts`](./resources/errorUtils.ts): Robust DRF error parsing and form field mapping utility.
+- [`apiTypes.ts`](./resources/apiTypes.ts): Canonical TypeScript interfaces for paginated collections and error payloads.
 
 ---
 
@@ -143,21 +205,32 @@ npm install axios
 
 ### Step 2: Deploy Resource Templates
 Copy the templates into the frontend application directory structure:
-1. `resources/apiConfig.ts` -> `<frontend>/src/lib/api/config.ts`
-2. `resources/apiClient.ts` -> `<frontend>/src/lib/api/client.ts`
-3. `resources/serverFetch.ts` -> `<frontend>/src/lib/api/serverFetch.ts`
-4. `resources/errorUtils.ts` -> `<frontend>/src/lib/api/errorUtils.ts`
+1. `resources/apiConfig.ts` -> `<frontend>/lib/api/apiConfig.ts`
+2. `resources/apiClient.ts` -> `<frontend>/lib/api/apiClient.ts`
+3. `resources/serverFetch.ts` -> `<frontend>/lib/api/serverFetch.ts`
+4. `resources/errorUtils.ts` -> `<frontend>/lib/api/errorUtils.ts`
+5. `resources/apiTypes.ts` -> `<frontend>/types/api.ts`
 
 ### Step 3: Configure Environment Variables
 Ensure `.env.local` (and container environments) define both bases:
 ```env
-# Server-side internal Docker routing
+# Server-side internal Docker routing (SSR)
 INTERNAL_API_BASE_URL=http://backend:8000
 
-# Client-side public edge routing
+# Client-side public edge routing (CSR)
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
 ```
 
+### Step 3.5: Module Resolution & Type Integrity Gate
+Assert that all required sync modules exist on disk and compile without error:
+```bash
+for f in lib/api/apiConfig.ts lib/api/apiClient.ts lib/api/serverFetch.ts lib/api/errorUtils.ts types/api.ts; do
+  test -f "frontend/$f" || { echo "FATAL: Missing required sync module frontend/$f"; exit 1; }
+done
+cd frontend && npx tsc --noEmit
+```
+A codebase importing `@/lib/api/*` without these files fails compilation immediately.
+
 ### Step 4: Validate Boundary Separation
-- In Server Components: Verify calls use `serverFetch('/api/v2/...')`.
-- In Client Components: Verify calls use `apiClient.get('/api/v2/...')`.
+- In Server Components: Verify calls use `serverFetch('/api/v1/...')`.
+- In Client Components: Verify calls use `apiClient.get('/api/v1/...')`.

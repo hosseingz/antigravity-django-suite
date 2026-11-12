@@ -46,6 +46,16 @@ Or with custom throttling metadata:
 }
 ```
 
+### 1.3.1 `detail` as an Array (Custom-View Anti-Pattern)
+```json
+{
+  "detail": [
+    "Invalid credentials provided."
+  ]
+}
+```
+Produced when custom serializer code executes `raise ValidationError({"detail": msg})`. This is **not** a form field error and must **never** be bound to an input named `detail`. The server-side `config.exceptions.api_exception_handler` converts this into a scalar `detail` string, and `extractFieldErrors` ignores `detail` to ensure it routes exclusively to top-level form alert banners via `extractNonFieldError`.
+
 ### 1.4 Custom API Error Wrappers
 Commonly returned by third-party packages (e.g., SimpleJWT, dj-rest-auth) or custom views:
 ```json
@@ -147,20 +157,23 @@ try {
 
 ### 3.2 Form Library Integration (React Hook Form)
 ```typescript
-import { extractFieldErrors, extractErrorMessage } from './resources/errorUtils';
+import { extractFieldErrors, extractNonFieldError, extractErrorMessage } from './resources/errorUtils';
 
 try {
-  await apiClient.post('/api/v2/auth/register/', formData);
+  await apiClient.post('/api/v1/auth/register/', formData);
 } catch (err) {
   const fieldErrors = extractFieldErrors(err);
+  const nonFieldError = extractNonFieldError(err);
 
-  // Bind individual field errors to form inputs
+  // 1. Bind individual field errors to form inputs
   Object.entries(fieldErrors).forEach(([field, errors]) => {
     setError(field as any, { type: 'server', message: errors[0] });
   });
 
-  // Display general alert if no specific field error was mapped
-  if (Object.keys(fieldErrors).length === 0) {
+  // 2. Set general banner alert for non-field errors or fallback summary
+  if (nonFieldError) {
+    setGeneralError(nonFieldError);
+  } else if (Object.keys(fieldErrors).length === 0) {
     setGeneralError(extractErrorMessage(err));
   }
 }

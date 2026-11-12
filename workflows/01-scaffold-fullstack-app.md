@@ -123,6 +123,7 @@ This workflow automates the greenfield scaffolding of an enterprise-grade fullst
    - `urls.py` -> `backend/config/urls.py`
    - `wsgi.py` -> `backend/config/wsgi.py`
    - `asgi.py` -> `backend/config/asgi.py`
+   - `exceptions.py` -> `backend/config/exceptions.py`
    - `apps_init.py` -> `backend/apps/__init__.py`
 
 3. **Verify Python Dependencies**:
@@ -172,21 +173,31 @@ This workflow automates the greenfield scaffolding of an enterprise-grade fullst
    ```
 
 3. **Deploy API Synchronization Layer**:
-   Create the destination directory:
+   Create the destination directories:
    ```bash
-   mkdir -p frontend/lib/api
+   mkdir -p frontend/lib/api frontend/types
    ```
-   Copy synchronization resources from [`skills/nextjs-api-sync/resources/`](../skills/nextjs-api-sync/resources/) into `frontend/lib/api/`:
+   Copy synchronization resources from [`skills/nextjs-api-sync/resources/`](../skills/nextjs-api-sync/resources/):
    - `apiConfig.ts` -> `frontend/lib/api/apiConfig.ts`
    - `apiClient.ts` -> `frontend/lib/api/apiClient.ts`
    - `serverFetch.ts` -> `frontend/lib/api/serverFetch.ts`
    - `errorUtils.ts` -> `frontend/lib/api/errorUtils.ts`
+   - `apiTypes.ts` -> `frontend/types/api.ts`
 
 4. **Enforce Execution Boundaries**:
    Verify that frontend modules respect runtime boundaries:
    - Client components and custom hooks (`'use client'`) must consume `apiClient` from `frontend/lib/api/apiClient.ts`.
    - React Server Components (RSC) and Server Actions must consume `serverFetch` from `frontend/lib/api/serverFetch.ts`.
    - Never import `apiClient.ts` inside Server Components (prevents referencing browser-only globals like `document.cookie` or `window`).
+
+5. **Verify Module Resolution & Type Integrity Gate**:
+   Assert that all client communication modules exist on disk and compile cleanly:
+   ```bash
+   for f in lib/api/apiConfig.ts lib/api/apiClient.ts lib/api/serverFetch.ts lib/api/errorUtils.ts types/api.ts; do
+     test -f "frontend/$f" || { echo "FATAL: Missing required sync module frontend/$f"; exit 1; }
+   done
+   cd frontend && npx tsc --noEmit
+   ```
 
 ---
 

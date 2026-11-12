@@ -152,8 +152,20 @@ export function extractErrorMessage(err: unknown): string {
   return 'An unexpected error occurred. Please try again.';
 }
 
+/** Non-field keys that must never be mapped to individual form input fields. */
+const NON_FIELD_KEYS = [
+  'detail',
+  'code',
+  'error',
+  'message',
+  'non_field_errors',
+  'status',
+  'status_code',
+];
+
 /**
  * Normalizes DRF field validation errors into a structured map for form binding.
+ * Explicitly ignores non-field / banner keys so they are not bound to phantom inputs.
  *
  * Example input:  { "email": ["Invalid email"], "password": ["Too short"] }
  * Example output: { "email": ["Invalid email"], "password": ["Too short"] }
@@ -175,8 +187,14 @@ export function extractFieldErrors(err: unknown): Record<string, string[]> {
     return result;
   }
 
-  for (const [field, value] of Object.entries(data as ErrorResponseObject)) {
-    if (['status', 'status_code', 'code'].includes(field)) {
+  // If structured fields object is present (from standardized api_exception_handler)
+  const fieldsSource = (data as Record<string, unknown>).fields || data;
+  if (!fieldsSource || typeof fieldsSource !== 'object' || Array.isArray(fieldsSource)) {
+    return result;
+  }
+
+  for (const [field, value] of Object.entries(fieldsSource as ErrorResponseObject)) {
+    if (NON_FIELD_KEYS.includes(field)) {
       continue;
     }
 
@@ -190,6 +208,40 @@ export function extractFieldErrors(err: unknown): Record<string, string[]> {
   }
 
   return result;
+}
+
+/**
+ * Extracts a non-field error message specifically intended for top-level alert banners.
+ * Returns null if the error is purely field-specific with no general message.
+ *
+ * @param err Caught exception
+ * @returns High-level banner error string, or null.
+ */
+export function extractNonFieldError(err: unknown): string | null {
+  if (!err || typeof err !== 'object') {
+    return null;
+  }
+
+  const errorObj = err as Record<string, unknown>;
+  const data = (
+    (errorObj.response as Record<string, unknown> | undefined)?.data ??
+    errorObj.data ??
+    err
+  ) as Record<string, unknown> | null;
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+
+  const raw = data.detail ?? data.non_field_errors ?? data.error ?? data.message;
+  if (!raw) {
+    return null;
+  }
+
+  if (Array.isArray(raw)) {
+    return raw.length > 0 ? String(raw[0]) : null;
+  }
+  return typeof raw === 'string' ? raw : extractErrorMessage(raw);
 }
 
 export default extractErrorMessage;

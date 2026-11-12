@@ -82,3 +82,25 @@ These guardrails enforce zero-hallucination, production-ready patterns across al
   - In `CookieJWTAuthentication`, check `request.parser_context["view"].permission_classes` and `request.method`.
   - For safe methods (`GET`, `HEAD`, `OPTIONS`) on views where permissions do not require authentication (e.g. `AllowAny`), return `None` to allow anonymous reading.
   - For mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) or protected views (`IsAuthenticated`), raise `AuthenticationFailed` with code `token_refresh_required` to trigger the client-side single-refresh mutex.
+
+---
+
+## 8. API Response & Error Contract (DRF ↔ Client)
+- **Rule**: Every API endpoint must conform to an explicit response shape contract, and every 4xx/5xx error must carry a string `detail` and a stable snake_case `code`:
+  - **No Success Envelopes**: Success responses are NEVER wrapped in `{data: ...}` envelopes. Single resources return bare objects `{...}`.
+  - **Collections Contract**:
+    - Pageable collections (`/posts/`) return `{count, next, previous, results}` powered by server-side `PageNumberPagination`. Client-side local slicing (`.slice(0, 9)`) or re-pagination is strictly prohibited; the server owns pagination, filtering (`?category=`), and sorting (`?ordering=`).
+    - Bounded lookup collections (`/categories/`, `/tags/`) return bare arrays `[...]` only via documented `pagination_class = None` allowlists.
+    - Client code MUST NOT use fallback guessing patterns like `data.results || data || []`.
+  - **Consistent Field Naming**: One canonical name per concept across list, detail, and mutation views (e.g. `likes`, `bookmarks`, `comments_count`). Renaming domain fields on the client (e.g. `likes: post.likes_count`) is a contract defect.
+  - **Standardized Error Contract**:
+    - All non-2xx responses must carry: `{ "detail": "Human-readable message.", "code": "stable_code", "fields"?: { "write_field": ["error"] } }`.
+    - `detail` MUST always be a string, never a list. Code must never call `ValidationError({"detail": [...]})`.
+    - `fields` is reserved for field validation errors only and must never contain non-field keys (`detail`, `code`, `non_field_errors`).
+    - A centralized DRF `EXCEPTION_HANDLER` produces this contract server-side.
+  - **Status Code Semantics**:
+    - `401 Unauthorized` is reserved exclusively for missing, expired, or invalid credentials to drive the single-refresh mutex.
+    - Bad credentials during login are a documented `400 Bad Request` (`code: "invalid_credentials"`), not 401.
+  - **Build & Typing Gate**:
+    - All client communication modules (`apiConfig.ts`, `apiClient.ts`, `serverFetch.ts`, `errorUtils.ts`, `types/api.ts`) must physically exist and compile cleanly (`npx tsc --noEmit`) before integration is declared complete.
+    - No `any` types at API boundaries; interfaces in `types/api.ts` must mirror serializer fields. Union types like `tags: string | string[]` are prohibited.

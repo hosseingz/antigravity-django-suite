@@ -259,6 +259,7 @@ REST_FRAMEWORK = {
         "auth": "10/min",
         "auth_refresh": "30/min",
     },
+    "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ) if not DEBUG else (

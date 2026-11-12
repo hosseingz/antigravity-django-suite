@@ -43,7 +43,10 @@ An enterprise-grade, high-performance skill suite for **Google Antigravity (AGY)
 - **Container Isolation & Least Privilege**:
   - Non-root container execution (`USER appuser`, UID 1001).
   - Explicit PID 1 signal handoff (`exec "$@"`) for graceful shutdown on `SIGTERM`.
+  - Query-based database handshake (`SELECT 1` via psycopg) verifying PostgreSQL query readiness rather than bare TCP socket guessing.
+  - Single-flight container bootstrap: entrypoint commands (`migrate`, `collectstatic`) execute strictly once per stack boot (`RUN_BOOTSTRAP: "0"` on Celery workers/beat), preventing concurrent table locks and WhiteNoise manifest corruption.
   - Zero `makemigrations` in entrypoint scripts to prevent migration drift across replicas.
+  - Development multi-stage target (`AS dev` in `Dockerfile.frontend`) with bind-mount host UID parity (`user: "${UID:-1000}:${GID:-1000}"`), eliminating root-owned files on dev hosts.
   - Bounded Docker JSON log rotation (3 files, 10MB limit) preventing disk exhaustion.
   - Port isolation: PostgreSQL, Redis, and internal services only declare `expose:`, unreachable directly from the host.
 
@@ -53,24 +56,30 @@ An enterprise-grade, high-performance skill suite for **Google Antigravity (AGY)
   - 12-factor configuration powered by `django-environ`.
   - Strict WhiteNoise middleware sequencing placed immediately below `SecurityMiddleware`.
   - Dedicated `/api/health/` container liveness probe.
+  - Centralized DRF `EXCEPTION_HANDLER` producing a normalized 3-part error contract (`{detail, code, fields}`).
 
 - **Dual-Token HttpOnly Security**:
   - Zero tokens stored in browser `localStorage`, `sessionStorage`, or JavaScript variables (full XSS immunity).
-  - Dual cookie management: `pod_access_token` (15 minutes) and `pod_refresh_token` (7 days) scoped explicitly to `Path=/` with `HttpOnly; Secure; SameSite=Lax`.
+  - Dual cookie management: `pod_access_token` (15 minutes) and `pod_refresh_token` (7 days) scoped explicitly to `Path=/` with `HttpOnly; SameSite=Lax`.
+  - Transport-derived cookie security (`COOKIE_SECURE`) decoupled from `DEBUG` to eliminate silent HTTP cookie drops in Docker local development while failing closed in production.
+  - Mandatory CSRF verification for cookie-consuming endpoints: `CookieCSRFProtectedMixin` enforces DRF `CSRFCheck` across `login/`, `register/`, `token/refresh/`, and `logout/`.
+  - Scoped public GET readability: public safe requests (`GET`, `HEAD`) remain accessible anonymously even when access cookies expire.
+  - Scoped rate-limiting (`ScopedRateThrottle`) on all credential endpoints to eliminate brute-force attack vectors.
   - Stateful Refresh Token Rotation (RTR): Single-use refresh tokens tracked in Redis with automatic token family revocation upon reuse detection.
   - Mandatory unique `jti` (JWT ID) claims in all generated payloads for deterministic server-side revocation.
   - Cryptographic separation: dedicated `JWT_SIGNING_KEY` enforced (never reuses Django core `SECRET_KEY`).
-  - Custom DRF `CookieJWTAuthentication` with CSRF defense on cookie mutations and anti-silent degradation (explicit 401s).
   - Deterministic logout eviction emitting `Max-Age=0` and past epoch expiration headers.
   - Non-premature route eviction in Next.js Edge middleware allowing page transitions when refresh tokens exist on `Path=/`.
-  - Single-refresh mutex lock in Axios preventing race conditions and infinite rotation loops.
+  - Single-refresh mutex lock in Axios preventing race conditions and infinite rotation loops, automatically injecting `X-CSRFToken`.
   - Redis-backed SMS OTP verification with brute-force lockout rate-limiting and constant-time string comparison (`hmac.compare_digest`).
 
-- **Dual-Environment Networking**:
-  - SSR (Server-Side Rendering & Server Actions) resolves to internal Docker bridge via `INTERNAL_API_BASE_URL` (`http://backend:8000`), bypassing egress and TLS overhead.
+- **Dual-Environment Networking & Response Contract**:
+  - SSR (Server-Side Rendering & Server Actions) resolves to internal Docker bridge via `INTERNAL_API_BASE_URL` (`http://backend:8000`), with host-level fallback (`http://localhost:8000`) for development outside Docker.
   - CSR (Client-Side Rendering) resolves to edge proxy via `NEXT_PUBLIC_API_BASE_URL` (`http://localhost:8080`).
   - Strict execution boundary: browser-only Axios client is quarantined from React Server Components.
-  - Universal DRF error normalization translating nested validation dictionaries into standardized UI error bags.
+  - Strict Response Envelope Contract: pageable collections return `{count, next, previous, results}` with server-owned pagination, bounded lookups return bare arrays, zero `{data: ...}` success envelopes, and no ambiguous fallback guessing (`data.results || data`).
+  - Universal DRF error normalization: `extractFieldErrors` maps form fields without phantom non-field keys; `extractNonFieldError` feeds alert banners.
+  - Build & Type Integrity Gate: `types/api.ts` mirrors serializer contracts without `any` pollution, verified via `npx tsc --noEmit`.
 
 - **High-Concurrency Domain Modules**:
   - Redis Hash shopping cart engine delivering sub-millisecond cart mutations decoupled from relational database locks.
@@ -89,10 +98,10 @@ Deploy the full suite (Roles, Skills, Guardrails, and Workflows) into your appli
 
 ```powershell
 # Windows (PowerShell)
-powershell -ExecutionPolicy Bypass -File .\scripts\install-suite.ps1 -Target "D:\Projects\my-app"
+powershell -ExecutionPolicy Bypass -File .\scripts\install-suite.ps1 -Target "..\my-app"
 
 # Preview changes without writing (DryRun)
-powershell -ExecutionPolicy Bypass -File .\scripts\install-suite.ps1 -Target "D:\Projects\my-app" -DryRun
+powershell -ExecutionPolicy Bypass -File .\scripts\install-suite.ps1 -Target "..\my-app" -DryRun
 ```
 
 This installs:

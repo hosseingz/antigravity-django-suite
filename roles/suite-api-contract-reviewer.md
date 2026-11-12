@@ -47,7 +47,11 @@ Precedence: `.agent/rules/ai-guardrails.md` > `.agent/rules/security-protocols.m
 - [ ] `apiClient.ts` does not appear in any `server` component, layout, or route handler.
 - [ ] Refresh is single-flight (mutex) and cannot loop on repeated 401s.
 - [ ] Unsafe methods carry the CSRF token; cookies are `HttpOnly` + `SameSite`.
-- [ ] Error normalization produces the same shape for network, 4xx, and 5xx failures.
+- [ ] Response Envelope Contract: Pageable collections return `{count, next, previous, results}`; bounded lookups return bare arrays; no `{data: ...}` wrappers; no client fallback guessing (`data.results || data`).
+- [ ] Canonical Field Names: Domain field names match 1:1 between serializers and client types (`likes`, `bookmarks`, `comments_count`); no ad-hoc client renaming.
+- [ ] Server-Owned Pagination: Server owns list filtering, sorting, and pagination via query parameters (`?page=`, `?search=`); local client-side `.slice()` on pageable collections is prohibited.
+- [ ] Standardized Error Contract: `EXCEPTION_HANDLER` produces `{detail, code, fields?}`; `detail` is strictly a string; `extractFieldErrors` ignores non-field keys; `extractNonFieldError` feeds banners.
+- [ ] Module Resolution & Type Integrity: All 5 sync modules (`apiConfig.ts`, `apiClient.ts`, `serverFetch.ts`, `errorUtils.ts`, `types/api.ts`) exist on disk and pass `npx tsc --noEmit` without `any` at API boundaries.
 
 ## Handoff
 

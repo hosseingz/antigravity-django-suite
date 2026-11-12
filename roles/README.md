@@ -42,28 +42,28 @@ Roles and Skills live in this repository as source; they are installed into **yo
 ### Full Suite (Roles + Skills + Rules + Workflows - Recommended)
 To install the entire suite so all skills, blueprints, and guardrails are in place:
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-suite.ps1 -Target C:\src\myapp
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-suite.ps1 -Target ..\my-app
 ```
 
 ### Roles Only
 To install only the role definitions (into `<project>/.agents/agents/*.md`):
 ```powershell
 # preview (no writes)
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target ..\my-app -DryRun
 
 # install all seven roles
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target ..\my-app
 
 # install only what the current phase needs
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -Only suite-auth-security-reviewer,suite-qa-release-gate
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target ..\my-app -Only suite-auth-security-reviewer,suite-qa-release-gate
 
 # inspect / remove
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -List
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -Uninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target ..\my-app -List
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target ..\my-app -Uninstall
 ```
 
 > **Execution policy:** on machines where script execution is disabled (`... running scripts is disabled on this system`), invoke the installer through a bypassed child process instead of calling the file directly:
-> `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target C:\src\myapp -DryRun`
+> `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-roles.ps1 -Target ..\my-app -DryRun`
 
 Manual fallback (no script): copy `roles/suite-*.md` into `<project>/.agents/agents/`. Keep the `suite-` prefix — it is what makes conflicts detectable. On macOS/Linux, the equivalent one-liner is:
 
