@@ -52,10 +52,13 @@ These guardrails enforce zero-hallucination, production-ready patterns across al
   - **Deterministic Client-Side Eviction**: On logout and session expiration, the server must invalidate the token in the backend cache/blacklist AND instruct the browser to purge cookies by issuing explicit `Set-Cookie` eviction headers with `Max-Age=0` and past expiration (`Expires=Thu, 01 Jan 1970 00:00:00 GMT`) for `Path=/`.
   - **Cryptographic Key Separation**: Signing JWTs using the framework's core `SECRET_KEY` is strictly prohibited. Applications must define and use a dedicated `JWT_SIGNING_KEY` (or asymmetric key pair such as `RS256`/`EdDSA`).
   - **Cookie-Authenticated CSRF Protection**: State-changing requests (POST, PUT, PATCH, DELETE) that authenticate via cookies must enforce robust CSRF countermeasures (e.g., DRF CSRFCheck verification).
-- **Rationale**: Storing tokens in `localStorage` leaves credentials vulnerable to XSS theft. Stateless refresh tokens cannot be revoked upon logout or breach. Restricting cookie paths causes premature eviction in frontend route middleware. Sharing `SECRET_KEY` couples JWT validation to core framework signing security.
+  - **No CSRF Gaps on Cookie-Consuming Auth Endpoints**: CSRF enforcement must not depend on `CookieJWTAuthentication`. Endpoints that mint or consume credentials (`login/`, `register/`, `token/refresh/`, `logout/`) declare `AllowAny` or unauthenticated classes, making DRF's implicit `csrf_exempt` leave them unprotected. They MUST invoke `CSRFCheck` explicitly via `CookieCSRFProtectedMixin`.
+  - **Transport-Derived Cookie Security**: `set_auth_cookies` and `clear_auth_cookies` must strictly read a centralized `COOKIE_SECURE` setting, never guessing from `settings.DEBUG`.
+- **Rationale**: Storing tokens in `localStorage` leaves credentials vulnerable to XSS theft. Stateless refresh tokens cannot be revoked upon logout or breach. Restricting cookie paths causes premature eviction in frontend route middleware. Sharing `SECRET_KEY` couples JWT validation to core framework signing security. Unprotected login/refresh endpoints enable login-CSRF and cross-origin rotation attacks.
 - **Enforcement**:
   - `CookieJWTAuthentication` must verify token `jti` against the Redis blacklist and enforce CSRF checks on mutating requests when authenticated via cookies.
-  - `set_auth_cookies` and `clear_auth_cookies` must strictly use `path="/"`.
+  - `set_auth_cookies` and `clear_auth_cookies` must strictly use `path="/"`, `SameSite="Lax"`, and derive `secure` from `settings.COOKIE_SECURE`.
+  - Logout MUST be CSRF-protected, blacklist the presented `jti` in Redis cache for its remaining TTL, and issue explicit Set-Cookie eviction headers.
   - Refresh endpoints must record old `jti` in Redis blacklist with TTL matching remaining token lifetime and issue new rotated pairs.
   - Startup checks must fail if `JWT_SIGNING_KEY` is missing or identical to `SECRET_KEY`.
 
@@ -69,3 +72,13 @@ These guardrails enforce zero-hallucination, production-ready patterns across al
 - **Enforcement**:
   - The API sync layer must resolve URLs contextually: inspect execution runtime (Server vs. Client) and choose the appropriate base URL automatically.
   - Disallow hardcoded single base URLs in universal fetch wrappers.
+
+---
+
+## 7. Public/Anonymous Readability vs. the Refresh Signal
+- **Rule**: The `token_refresh_required` 401 (anti-silent-degradation) applies only to endpoints that require authentication or to unsafe mutating methods. Public `GET`/`HEAD`/`OPTIONS` endpoints MUST remain readable when the access cookie is absent or expired, even if a refresh cookie is present.
+- **Rationale**: In DRF, `authenticate()` executes before permissions are evaluated. Raising an unconditional `AuthenticationFailed` inside `authenticate()` when `raw_token is None` and `has_refresh_cookie is True` turns every public page (e.g., blog post, catalog) into a 401 Unauthorized for any user holding an expired session — an availability bug that degrades user experience.
+- **Enforcement**:
+  - In `CookieJWTAuthentication`, check `request.parser_context["view"].permission_classes` and `request.method`.
+  - For safe methods (`GET`, `HEAD`, `OPTIONS`) on views where permissions do not require authentication (e.g. `AllowAny`), return `None` to allow anonymous reading.
+  - For mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) or protected views (`IsAuthenticated`), raise `AuthenticationFailed` with code `token_refresh_required` to trigger the client-side single-refresh mutex.

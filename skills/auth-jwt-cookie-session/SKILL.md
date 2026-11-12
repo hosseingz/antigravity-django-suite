@@ -90,6 +90,21 @@ This skill establishes the production-grade authentication pipeline combining Dj
   - *Risk*: Cookie-based authentication is inherently subject to Cross-Site Request Forgery if browsers send credentials automatically.
   - *Solution*: In `CookieJWTAuthentication`, enforce CSRF verification (via DRF `CSRFCheck`) whenever credentials originate from cookies.
 
+- **Anti-Pattern 8: Treating `authentication_classes = []` as a CSRF Exemption**
+  - *Rule*: Every cookie-consuming or cookie-minting endpoint (`login`, `register`, `token/refresh`, `logout`) MUST explicitly verify CSRF via `CSRFCheck` (e.g. `CookieCSRFProtectedMixin`).
+  - *Risk*: DRF's `APIView.as_view()` is marked `csrf_exempt`. If an auth view sets `authentication_classes = []` or `permission_classes = [AllowAny]`, DRF completely skips Django's CSRF middleware and never re-introduces `CSRFCheck`. This leaves endpoints open to Login-CSRF, Logout-CSRF (forced DoS), and cross-origin refresh rotation.
+  - *Solution*: Apply `CookieCSRFProtectedMixin` which invokes `CSRFCheck` in `initial()`, pair it with a bootstrap `GET /api/v1/auth/csrf/` endpoint, and enforce `X-CSRFToken` injection in `apiClient` for all mutating calls including refresh.
+
+- **Anti-Pattern 9: Basing Cookie Security Flags on `secure = not DEBUG`**
+  - *Rule*: Secure flags derive strictly from an explicit transport/environment setting (`COOKIE_SECURE`), never from `DEBUG`.
+  - *Risk*: In Docker or staging environments running with `DEBUG=0` over plain HTTP (`http://localhost:8080`), setting `secure=True` causes modern browsers to silently discard all auth cookies. The login returns 200, but no session is established, and the subsequent request immediately throws `CSRF Failed: CSRF cookie not set`.
+  - *Solution*: Use `COOKIE_SECURE = env.bool("COOKIE_SECURE", default=ENVIRONMENT not in ["development", "local"])` as the single source of truth across all cookie operations.
+
+- **Anti-Pattern 10: Unthrottled Credential Endpoints**
+  - *Rule*: Authentication endpoints (`login/`, `register/`, `token/refresh/`, `otp/*`) must declare explicit DRF throttle scopes.
+  - *Risk*: Line-rate credential brute force and denial of service attacks against cryptographic token hashing functions.
+  - *Solution*: Enforce `ScopedRateThrottle` with scoped limits (e.g., `10/min` for login, `30/min` for refresh) backed by Redis.
+
 ---
 
 ## 3. Suite Integration & Component Architecture
@@ -101,23 +116,27 @@ This skill establishes the production-grade authentication pipeline combining Dj
   - Decodes and validates tokens against dedicated `settings.JWT_SIGNING_KEY` (never `SECRET_KEY`).
   - Verifies token `jti` against the Redis blacklist (`jwt:blacklist:<jti>`).
   - Enforces DRF `CSRFCheck` on cookie-authenticated mutating requests.
-  - Implements anti-silent-degradation logic for seamless token refresh.
+  - Implements scoped anti-silent-degradation logic: public safe requests (`GET`, `HEAD`) proceed anonymously; protected or mutating requests return `token_refresh_required` (HTTP 401).
 - [`views_auth.py`](./resources/backend/views_auth.py):
-  - `set_auth_cookies()` & `clear_auth_cookies()`: Encapsulates cookie generation with `HttpOnly`, `SameSite=Lax`, `Path=/`, and environment-aware `Secure` flags. Deterministic logout issues `Max-Age=0` and past expiration headers.
-  - `LoginAPIView`: Authenticates credentials and writes dual cookies without leaking tokens into response JSON.
-  - `RefreshTokenView`: Verifies `pod_refresh_token`, enforces Refresh Token Rotation (RTR) via Redis blacklist, and detects token reuse.
-  - `LogoutAPIView`: Blacklists active `jti` in Redis cache for its remaining TTL and purges cookies deterministically.
+  - `CookieCSRFProtectedMixin`: Injects explicit `CSRFCheck` verification for cookie-consuming endpoints.
+  - `CsrfTokenAPIView`: Provides `GET /api/v1/auth/csrf/` (`@ensure_csrf_cookie`) to bootstrap the CSRF cookie on initial SPA hydration.
+  - `set_auth_cookies()` & `clear_auth_cookies()`: Encapsulates cookie generation with `HttpOnly`, `SameSite=Lax`, `Path=/`, and centralized `settings.COOKIE_SECURE` flag.
+  - `LoginAPIView`: Authenticates credentials with throttling (`throttle_scope = "auth"`) and sets dual cookies.
+  - `RefreshTokenView`: Verifies `pod_refresh_token` with CSRF protection, enforces Refresh Token Rotation (RTR), and detects token reuse.
+  - `LogoutAPIView`: Blacklists active `jti` in Redis cache for its remaining TTL, clears cookies, and validates CSRF.
   - `SendOtpView` & `VerifyOtpView`: Redis-backed passwordless SMS verification with 120s cooldowns and 5-attempt brute-force lockouts.
 
 ### 3.2 Frontend Components (`resources/frontend/`)
 - [`middleware.ts`](./resources/frontend/middleware.ts):
   - Next.js edge route guard checking protected routes (`/dashboard`, `/checkout`, `/profile`).
+  - Route matchers MUST correspond to routes that actually exist in the application.
   - Guards against premature eviction by recognizing valid refresh cookies on `Path=/`.
   - Automatically redirects authenticated users away from guest pages (`/auth/login`, `/auth/register`).
 - [`useAuthStore.ts`](./resources/frontend/useAuthStore.ts):
   - Zustand auth store tracking `user`, `isAuthenticated`, and `isLoading`.
   - Safely hydrates from non-sensitive profile metadata in `localStorage`.
-  - Connects with [`apiClient.ts`](../nextjs-api-sync/resources/apiClient.ts) and listens for `auth:session-expired` events.
+  - Routes refresh requests through `apiClient.ts` to ensure `X-CSRFToken` is attached.
+  - Listens for `auth:session-expired` events.
 
 ### 3.3 Deep-Dive Technical References
 - [`references/cookie-lifecycle.md`](./references/cookie-lifecycle.md): Detailed analysis of HttpOnly, Secure, and SameSite flags, `Path=/` alignment, Redis RTR, deterministic logout eviction, and CSRF defense.
@@ -159,6 +178,7 @@ In `backend/config/urls.py`:
 ```python
 from django.urls import path
 from apps.authentication.views import (
+    CsrfTokenAPIView,
     LoginAPIView,
     RefreshTokenView,
     LogoutAPIView,
@@ -167,6 +187,7 @@ from apps.authentication.views import (
 )
 
 urlpatterns = [
+    path("api/v2/auth/csrf/", CsrfTokenAPIView.as_view(), name="auth-csrf"),
     path("api/v2/auth/login/", LoginAPIView.as_view(), name="auth-login"),
     path("api/v2/auth/token/refresh/", RefreshTokenView.as_view(), name="auth-refresh"),
     path("api/v2/auth/logout/", LogoutAPIView.as_view(), name="auth-logout"),
@@ -175,19 +196,23 @@ urlpatterns = [
 ]
 ```
 
-### Step 3: Deploy Frontend Middleware & Store
-1. Copy [`resources/frontend/middleware.ts`](./resources/frontend/middleware.ts) into the root of your Next.js application (`frontend/middleware.ts`).
-2. Copy [`resources/frontend/useAuthStore.ts`](./resources/frontend/useAuthStore.ts) into `frontend/stores/useAuthStore.ts`.
-3. In your root React layout or auth provider, invoke `hydrateAuth()`:
+### Step 3: Deploy Frontend Middleware, API Client & Store
+1. Copy [`resources/frontend/middleware.ts`](./resources/frontend/middleware.ts) into the root of your Next.js application (`frontend/middleware.ts`). Ensure route matchers correspond to routes that actually exist in the application.
+2. Deploy [`apiClient.ts`](../nextjs-api-sync/resources/apiClient.ts) into `frontend/lib/api/apiClient.ts` to ensure automatic `csrftoken` reading and `X-CSRFToken` header injection on mutating requests (and within the refresh mutex lock).
+3. Copy [`resources/frontend/useAuthStore.ts`](./resources/frontend/useAuthStore.ts) into `frontend/stores/useAuthStore.ts`.
+4. In your root React layout or auth provider, bootstrap CSRF and invoke `hydrateAuth()`:
 ```typescript
 'use client';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { apiClient } from '@/lib/api/apiClient';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hydrateAuth = useAuthStore((state) => state.hydrateAuth);
 
   useEffect(() => {
+    // Bootstrap CSRF cookie on initial mount
+    apiClient.get('/api/v2/auth/csrf/').catch(() => {});
     hydrateAuth();
   }, [hydrateAuth]);
 

@@ -22,7 +22,10 @@ from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.models import AbstractBaseUser
 from django.core.cache import cache
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import exceptions, status
+from rest_framework.authentication import CSRFCheck
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -83,8 +86,16 @@ def issue_token_pair(user: AbstractBaseUser) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Cookie Utilities
+# Cookie Utilities & CSRF Mixin
 # ---------------------------------------------------------------------------
+
+def get_cookie_secure() -> bool:
+    """
+    Returns whether auth cookies must carry the Secure flag.
+    Derives strictly from settings.COOKIE_SECURE (transport-based), falling back to 'not DEBUG'.
+    """
+    return getattr(settings, "COOKIE_SECURE", not getattr(settings, "DEBUG", False))
+
 
 def set_auth_cookies(
     response: Response,
@@ -95,7 +106,7 @@ def set_auth_cookies(
     Attaches secure HttpOnly cookies to the outgoing DRF Response.
     Mandatory Alignment: Both cookies MUST use path="/" for Next.js route guard compatibility.
     """
-    secure_flag = not getattr(settings, "DEBUG", False)
+    secure_flag = get_cookie_secure()
 
     # 1. Access Token Cookie (Short-lived, Path=/)
     response.set_cookie(
@@ -127,7 +138,7 @@ def clear_auth_cookies(response: Response) -> Response:
     """
     Evicts authentication state deterministically on Path=/ using Max-Age=0 and past Expires.
     """
-    secure_flag = not getattr(settings, "DEBUG", False)
+    secure_flag = get_cookie_secure()
 
     for cookie_name in (ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME):
         response.delete_cookie(
@@ -150,6 +161,36 @@ def clear_auth_cookies(response: Response) -> Response:
     return response
 
 
+class CookieCSRFProtectedMixin:
+    """
+    Enforces double-submit CSRF verification on cookie-consuming or cookie-minting endpoints.
+    Required because DRF APIView.as_view() is marked csrf_exempt by design, skipping
+    CsrfViewMiddleware. Views with AllowAny or authentication_classes = [] that read or set
+    cookies MUST inherit this mixin to prevent Login-CSRF, Logout-CSRF, and cross-origin refresh.
+    """
+    def initial(self, request: Request, *args: Any, **kwargs: Any) -> None:
+        super().initial(request, *args, **kwargs)
+        if request.method not in ("GET", "HEAD", "OPTIONS", "TRACE"):
+            check = CSRFCheck(lambda req: None)
+            check.process_request(request)
+            reason = check.process_view(request, None, (), {})
+            if reason:
+                logger.warning("CSRF validation failed on auth endpoint (%s): %s", request.path, reason)
+                raise exceptions.PermissionDenied(f"CSRF Failed: {reason}")
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CsrfTokenAPIView(APIView):
+    """
+    Bootstraps the Django csrftoken cookie for Single Page Applications (Next.js App Router).
+    Called once during client hydration so subsequent mutating calls have a valid double-submit token.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request: Request) -> Response:
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 def serialize_user_profile(user: AbstractBaseUser) -> dict[str, Any]:
     """
     Serializes safe, non-sensitive user metadata for client-side Zustand hydration.
@@ -169,12 +210,14 @@ def serialize_user_profile(user: AbstractBaseUser) -> dict[str, Any]:
 # Authentication Views
 # ---------------------------------------------------------------------------
 
-class LoginAPIView(APIView):
+class LoginAPIView(CookieCSRFProtectedMixin, APIView):
     """
     Authenticates username/email credentials and sets dual HttpOnly cookies.
     Response body contains user profile metadata only — tokens never touch JavaScript.
+    Protected against Brute-Force via scoped throttling and CSRF via CookieCSRFProtectedMixin.
     """
     permission_classes = [AllowAny]
+    throttle_scope = "auth"
 
     def post(self, request: Request) -> Response:
         username = request.data.get("username") or request.data.get("email")
@@ -211,14 +254,16 @@ class LoginAPIView(APIView):
         return set_auth_cookies(response, access_token, refresh_token)
 
 
-class RefreshTokenView(APIView):
+class RefreshTokenView(CookieCSRFProtectedMixin, APIView):
     """
     Performs silent background token refresh with stateful Refresh Token Rotation (RTR).
     Reads `pod_refresh_token` from HttpOnly cookies, verifies signature against dedicated
     JWT_SIGNING_KEY, validates unique `jti`, detects token reuse, blacklists the old token
     in Redis, and issues a freshly rotated token pair on Path=/.
+    Protected against Cross-Origin CSRF via CookieCSRFProtectedMixin and flooding via throttling.
     """
     permission_classes = [AllowAny]
+    throttle_scope = "auth_refresh"
 
     def post(self, request: Request) -> Response:
         refresh_raw = request.COOKIES.get(REFRESH_COOKIE_NAME)
@@ -322,10 +367,11 @@ class RefreshTokenView(APIView):
         return set_auth_cookies(response, new_access_token, new_refresh_token)
 
 
-class LogoutAPIView(APIView):
+class LogoutAPIView(CookieCSRFProtectedMixin, APIView):
     """
     Clears HttpOnly authentication cookies deterministically and blacklists
     the presented refresh token in Redis for its remaining TTL.
+    Protected against forced Logout-CSRF via CookieCSRFProtectedMixin.
     """
     permission_classes = [AllowAny]
 

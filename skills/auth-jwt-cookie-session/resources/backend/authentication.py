@@ -26,6 +26,19 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+def enforce_csrf(request: Request) -> None:
+    """
+    Enforces double-submit CSRF validation for cookie-authenticated or cookie-consuming requests.
+    Reusable across CookieJWTAuthentication and CookieCSRFProtectedMixin.
+    """
+    check = CSRFCheck(lambda req: None)
+    check.process_request(request)
+    reason = check.process_view(request, None, (), {})
+    if reason:
+        logger.warning("CSRF validation failed for cookie request: %s", reason)
+        raise exceptions.PermissionDenied(f"CSRF Failed: {reason}")
+
+
 class CookieJWTAuthentication(BaseAuthentication):
     """
     Production-grade JWT authentication backend inspecting both headers and HttpOnly cookies.
@@ -40,7 +53,8 @@ class CookieJWTAuthentication(BaseAuthentication):
     - Stateful Revocation: Checks incoming `jti` against the Redis/cache blacklist.
     - CSRF Protection: Enforces strict CSRF check for cookie-authenticated state-changing requests.
     - Anti-Silent-Degradation: If an access token is expired, or if missing while refresh cookie exists,
-      MUST raise `exceptions.AuthenticationFailed` with code `token_refresh_required` (HTTP 401).
+      raises `exceptions.AuthenticationFailed` with code `token_refresh_required` (HTTP 401) ONLY for
+      views requiring authentication or mutating methods. Public GETs proceed anonymously.
     """
 
     ACCESS_COOKIE_NAME: str = "pod_access_token"
@@ -55,14 +69,23 @@ class CookieJWTAuthentication(BaseAuthentication):
         has_refresh_cookie: bool = self.REFRESH_COOKIE_NAME in request.COOKIES
 
         if raw_token is None:
-            # If access cookie is missing but refresh cookie exists, trigger silent refresh
-            if has_refresh_cookie:
+            # Check if target view explicitly requires authentication or is an unsafe mutating method
+            view = getattr(request, "parser_context", {}).get("view")
+            permission_classes = tuple(getattr(view, "permission_classes", ()))
+            requires_auth = any(
+                getattr(p, "__name__", "") in {"IsAuthenticated", "IsAdminUser", "IsAuthenticatedOrReadOnly"}
+                for p in permission_classes
+            )
+            is_safe_method = request.method in ("GET", "HEAD", "OPTIONS")
+
+            # Only trigger silent refresh for authenticated views or unsafe mutating methods
+            if has_refresh_cookie and (requires_auth or not is_safe_method):
                 logger.debug("Access cookie missing while refresh cookie is present. Triggering refresh.")
                 raise exceptions.AuthenticationFailed(
                     detail={"detail": "Access token missing; refresh required.", "code": "token_refresh_required"},
                     code="token_refresh_required",
                 )
-            # Anonymous / unauthenticated request
+            # Anonymous / unauthenticated request (public safe GETs proceed anonymously)
             return None
 
         return self._authenticate_credentials(request, raw_token, has_refresh_cookie, from_cookie)
@@ -89,14 +112,9 @@ class CookieJWTAuthentication(BaseAuthentication):
 
     def enforce_csrf(self, request: Request) -> None:
         """
-        Enforces CSRF validation for cookie-authenticated mutating requests.
+        Delegates to module-level enforce_csrf.
         """
-        check = CSRFCheck(lambda req: None)
-        check.process_request(request)
-        reason = check.process_view(request, None, (), {})
-        if reason:
-            logger.warning("CSRF validation failed for cookie-authenticated request: %s", reason)
-            raise exceptions.PermissionDenied(f"CSRF Failed: {reason}")
+        enforce_csrf(request)
 
     def _authenticate_credentials(
         self, request: Request, raw_token: str, has_refresh_cookie: bool, from_cookie: bool

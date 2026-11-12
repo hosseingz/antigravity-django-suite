@@ -39,7 +39,7 @@ To provide defense-in-depth, this suite enforces a dual-token HttpOnly cookie ar
 | Cookie Flag | Value | Threat Mitigated | Technical Mechanism |
 | :--- | :--- | :--- | :--- |
 | **`HttpOnly`** | `True` | **Cross-Site Scripting (XSS)** | Directives with `HttpOnly` are hidden from client JavaScript APIs (`document.cookie`). Malicious scripts injected through DOM XSS cannot read, serialize, or exfiltrate the JWT. |
-| **`Secure`** | `not settings.DEBUG` | **Man-in-the-Middle (MitM) & Wiretapping** | Forces the browser to send cookies exclusively over encrypted TLS/HTTPS connections. In local development (`DEBUG=True`), plain HTTP over `localhost` is supported. |
+| **`Secure`** | `settings.COOKIE_SECURE` | **Man-in-the-Middle (MitM) & Wiretapping** | Forces the browser to send cookies exclusively over encrypted TLS/HTTPS connections. Transport-derived: in local HTTP development, `COOKIE_SECURE=0` allows cookies over `localhost`; outside development, it is asserted `True`. |
 | **`SameSite`** | `'Lax'` | **Cross-Site Request Forgery (CSRF)** | Withholds the authentication cookie on cross-origin subrequests (e.g., third-party `<img>`, `<fetch>`, or `<form>` POSTs) while permitting normal top-level navigation links. |
 | **`Path`** | `'/'` | **Path Fragmentation & SSR Route Eviction** | MUST be explicitly configured to `'/'` for BOTH access and refresh cookies. Restricting the refresh cookie path to `/api/auth/` prevents Next.js Edge route guards (`middleware.ts`) and SSR layouts from reading the refresh cookie on page navigation (e.g., `/dashboard`), causing catastrophic premature session eviction. |
 
@@ -58,22 +58,28 @@ Signing JWTs with the framework's core `settings.SECRET_KEY` is strictly prohibi
       raise ValueError("FATAL: JWT_SIGNING_KEY must be set in production environments.")
   ```
 
-### 2.2 CSRF Defense for Cookie-Authenticated Requests
-Because browsers automatically attach `HttpOnly` cookies to same-site and top-level navigation requests, state-changing requests (POST, PUT, PATCH, DELETE) authenticated via cookies are vulnerable to Cross-Site Request Forgery (CSRF).
+### 2.2 CSRF Defense for Cookie-Authenticated & Cookie-Consuming Endpoints
+Because browsers automatically attach `HttpOnly` cookies to same-site requests, state-changing requests (POST, PUT, PATCH, DELETE) authenticated via cookies or consuming cookies are vulnerable to Cross-Site Request Forgery (CSRF).
 - `CookieJWTAuthentication` strictly enforces CSRF verification (via DRF `CSRFCheck`) whenever the request credential originates from cookies.
+- **Cookie-Consuming Auth Endpoints**: In DRF, `APIView.as_view()` is marked `csrf_exempt`. Views that declare `authentication_classes = []` or `permission_classes = [AllowAny]` (e.g., `login/`, `register/`, `token/refresh/`, `logout/`) completely bypass DRF's authentication classes and therefore skip `CSRFCheck` unless explicitly protected. They MUST inherit `CookieCSRFProtectedMixin` which invokes `CSRFCheck` in `initial()`.
 - Pure Bearer header requests (used by mobile apps and third-party APIs) are exempt from CSRF checks because external scripts cannot inject arbitrary authorization headers cross-origin without CORS pre-flight consent.
 
 ---
 
 ## 3. Development vs. Production Cookie Policies
 
-A common point of failure when deploying Dockerized or staging stacks is cookie rejection due to misconfigured `Secure` or `Domain` attributes:
+A common point of failure when deploying Dockerized or staging stacks is cookie rejection due to misconfigured `Secure`, `SameSite`, or `Domain` attributes:
 
-### 2.1 The Secure Flag Switch
+### 3.1 The Transport-Derived Secure Flag Switch
 In `config/settings.py` and `resources/backend/views_auth.py`:
 ```python
+# config/settings.py
+COOKIE_SECURE = env.bool("COOKIE_SECURE", default=ENVIRONMENT not in ["development", "local"])
+SESSION_COOKIE_SECURE = COOKIE_SECURE
+CSRF_COOKIE_SECURE = COOKIE_SECURE
+
 # resources/backend/views_auth.py
-secure_flag = not getattr(settings, "DEBUG", False)
+secure_flag = getattr(settings, "COOKIE_SECURE", not getattr(settings, "DEBUG", False))
 
 response.set_cookie(
     key="pod_access_token",
@@ -86,14 +92,17 @@ response.set_cookie(
 )
 ```
 
-- **In Local Development (`DEBUG = True`)**: `secure=False` allows browser cookies to be written over unencrypted `http://localhost:3000` or `http://localhost:8080`.
-- **In Production (`DEBUG = False`)**: `secure=True` is strictly enforced. Attempting to set or transmit a `secure` cookie over plaintext HTTP will cause modern browsers to discard the `Set-Cookie` header silently.
+- **Transport Alignment**: The `Secure` attribute must reflect the transport protocol (HTTPS vs. HTTP), NOT `settings.DEBUG`. In Docker local development stacks where `DEBUG=0` is run over plaintext `http://localhost:8080`, setting `secure=True` causes modern browsers to **silently discard all cookies**. The login returns 200 OK, but no session is saved, and the subsequent request fails with `CSRF Failed: CSRF cookie not set`.
+- **Production Assertion**: Outside `development` and `local`, `COOKIE_SECURE` must be asserted `True` at startup to prevent fail-open regressions.
 
-### 2.2 Cross-Origin & Credentials Setup
-When the frontend (`https://app.example.com`) and backend (`https://api.example.com`) run on separate subdomains:
-- `CORS_ALLOW_CREDENTIALS = True` must be enabled in Django settings.
-- `CORS_ALLOWED_ORIGINS` must list the explicit frontend domain (wildcard `*` is strictly disallowed by browsers when credentials are enabled).
-- In Axios: `withCredentials: true` must be enabled on every request (already baked into `resources/frontend/../../nextjs-api-sync/resources/apiClient.ts`).
+### 3.2 Deployment Topology Matrix
+
+| Topology | CORS Configuration | Cookie `SameSite` | `CSRF_COOKIE_DOMAIN` | Architecture Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **Same-Origin via Edge Proxy (`/api` proxied)** *(Recommended)* | N/A (Same-Origin) | `'Lax'` | Unset | Preferred production standard. Double-submit CSRF works natively because cookies share the document origin. `NEXT_PUBLIC_API_BASE_URL=""`. |
+| **Local Dev Split Port (`localhost:3000` -> `localhost:8080`)** | `CORS_ALLOWED_ORIGINS` + `CORS_ALLOW_CREDENTIALS=True` | `'Lax'` | Unset | Browser ports share cookie jars on `localhost`. Requires `ENVIRONMENT=development` to enable dev CORS injection. |
+| **Separate Subdomains (`app.example.com` -> `api.example.com`)** | Explicit origin whitelisting + `CORS_ALLOW_CREDENTIALS=True` | `'Lax'` (with same-site) or `'None; Secure'` | `".example.com"` | JS on `app.example.com` CANNOT read double-submit CSRF cookie set by `api.example.com` without setting `CSRF_COOKIE_DOMAIN=".example.com"`. |
+| **Completely Unrelated Domains** | Disallowed by design | — | — | Cross-site cookie constraints make double-submit and auth brittle; must proxy through a common gateway. |
 
 ---
 

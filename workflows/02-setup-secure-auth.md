@@ -92,9 +92,11 @@ REST_FRAMEWORK = {
 }
 
 # Cookie Configuration for Dual-Token Authentication (Mandatory Path=/)
+COOKIE_SECURE = env.bool('COOKIE_SECURE', default=ENVIRONMENT not in ['development', 'local'])
+SESSION_COOKIE_SECURE = COOKIE_SECURE
+CSRF_COOKIE_SECURE = COOKIE_SECURE
 AUTH_COOKIE_ACCESS = 'pod_access_token'
 AUTH_COOKIE_REFRESH = 'pod_refresh_token'
-AUTH_COOKIE_SECURE = not DEBUG  # True in production HTTPS
 AUTH_COOKIE_HTTPONLY = True
 AUTH_COOKIE_SAMESITE = 'Lax'
 AUTH_COOKIE_PATH = '/'  # MUST be '/' for Next.js route guard compatibility
@@ -116,6 +118,7 @@ Wire the authentication routes in `backend/apps/users/urls.py` (or `backend/conf
 # backend/apps/users/urls.py
 from django.urls import path
 from users.views import (
+    CsrfTokenAPIView,
     LoginAPIView,
     RefreshTokenView,
     LogoutAPIView,
@@ -124,6 +127,7 @@ from users.views import (
 )
 
 urlpatterns = [
+    path('auth/csrf/', CsrfTokenAPIView.as_view(), name='auth-csrf'),
     path('auth/login/', LoginAPIView.as_view(), name='auth-login'),
     path('auth/token/refresh/', RefreshTokenView.as_view(), name='auth-token-refresh'),
     path('auth/logout/', LogoutAPIView.as_view(), name='auth-logout'),
@@ -195,10 +199,17 @@ Confirm that `frontend/lib/api/apiClient.ts` (deployed during Workflow 01 from [
 Follow these verification steps to test the authentication pipeline:
 
 ### Check 1: User Login & Cookie Injection
-Authenticate via standard username/password:
+First, obtain the CSRF bootstrap token:
 ```bash
-curl -i -X POST http://localhost:8080/api/v2/auth/login/ \
+curl -i -c cookies.txt http://localhost:8080/api/v2/auth/csrf/
+CSRF_TOKEN=$(grep csrftoken cookies.txt | awk '{print $7}')
+```
+
+Execute a login mutation carrying the double-submit CSRF pair:
+```bash
+curl -i -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v2/auth/login/ \
   -H "Content-Type: application/json" \
+  -H "X-CSRFToken: $CSRF_TOKEN" \
   -d '{"username": "testuser", "password": "TestPassword123!"}'
 ```
 - **Expected Outcome**:
@@ -208,12 +219,14 @@ curl -i -X POST http://localhost:8080/api/v2/auth/login/ \
     - `Set-Cookie: pod_access_token=...; HttpOnly; Path=/; SameSite=Lax`
     - `Set-Cookie: pod_refresh_token=...; HttpOnly; Path=/; SameSite=Lax`
   - Body MUST NOT contain raw JWT strings.
+  - Sending a POST without the `X-CSRFToken` header returns `403 Forbidden` (`CSRF Failed`).
 
 ### Check 2: SMS OTP Generation & Verification
 Request an SMS verification code:
 ```bash
-curl -i -X POST http://localhost:8080/api/v2/auth/otp/send/ \
+curl -i -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v2/auth/otp/send/ \
   -H "Content-Type: application/json" \
+  -H "X-CSRFToken: $CSRF_TOKEN" \
   -d '{"phone": "+15550199000"}'
 ```
 - **Expected Outcome**: HTTP `200 OK` with `retry_after: 120`. Inspect backend container logs to view the dispatched code:
@@ -222,8 +235,9 @@ docker compose logs backend --tail 20 | grep SMS-OTP-GATEWAY
 ```
 Verify the code:
 ```bash
-curl -i -X POST http://localhost:8080/api/v2/auth/otp/verify/ \
+curl -i -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v2/auth/otp/verify/ \
   -H "Content-Type: application/json" \
+  -H "X-CSRFToken: $CSRF_TOKEN" \
   -d '{"phone": "+15550199000", "code": "<EXTRACTED_CODE>"}'
 ```
 - **Expected Outcome**: HTTP `200 OK` with `Set-Cookie` headers for `pod_access_token` and `pod_refresh_token`.
@@ -236,18 +250,20 @@ curl -i http://localhost:8080/dashboard
 - **Expected Outcome**: HTTP `307 Temporary Redirect` to `/auth/login?next=%2Fdashboard`.
 
 ### Check 4: Silent Token Refresh via Mutex Lock
-Send an expired access token alongside a valid refresh token cookie to the refresh endpoint:
+Send a valid refresh token cookie along with the CSRF header to the refresh endpoint:
 ```bash
-curl -i -X POST http://localhost:8080/api/v2/auth/token/refresh/ \
-  -H "Cookie: pod_refresh_token=<VALID_REFRESH_TOKEN>"
+curl -i -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v2/auth/token/refresh/ \
+  -H "Content-Type: application/json" \
+  -H "X-CSRFToken: $CSRF_TOKEN"
 ```
 - **Expected Outcome**: HTTP `200 OK` with fresh `Set-Cookie: pod_access_token=...` and rotated `Set-Cookie: pod_refresh_token=...`.
 
 ### Check 5: Logout & Cookie Invalidation
-Invoke the logout endpoint:
+Invoke the logout endpoint carrying CSRF verification:
 ```bash
-curl -i -X POST http://localhost:8080/api/v2/auth/logout/ \
-  -H "Cookie: pod_access_token=<TOKEN>; pod_refresh_token=<TOKEN>"
+curl -i -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v2/auth/logout/ \
+  -H "Content-Type: application/json" \
+  -H "X-CSRFToken: $CSRF_TOKEN"
 ```
 - **Expected Outcome**:
   - HTTP `200 OK`.

@@ -54,12 +54,28 @@ if not JWT_SIGNING_KEY and not DEBUG:
 elif not JWT_SIGNING_KEY:
     JWT_SIGNING_KEY = "django-insecure-jwt-signing-fallback-key-never-use-in-production"
 
-# Dynamic host resolution
-raw_allowed_hosts = env("ALLOWED_HOSTS")
-fallback_hosts = ["localhost", "127.0.0.1", "backend", "django-app"]
-ALLOWED_HOSTS = list(dict.fromkeys(raw_allowed_hosts + fallback_hosts))
+# Transport-Derived Cookie Security (Never derive solely from DEBUG)
+COOKIE_SECURE = env.bool("COOKIE_SECURE", default=ENVIRONMENT not in ["development", "local"])
+SESSION_COOKIE_SECURE = COOKIE_SECURE
+CSRF_COOKIE_SECURE = COOKIE_SECURE
 
-# Dynamic CORS & CSRF origin handling
+# Fail-Closed Production Assertions
+if ENVIRONMENT not in ["development", "local"] and not COOKIE_SECURE:
+    raise ValueError("FATAL: COOKIE_SECURE must be enabled outside development.")
+if ENVIRONMENT == "production" and DEBUG:
+    raise ValueError("FATAL: DEBUG must be disabled in production.")
+
+# Dynamic Host Resolution (Development origins strictly gated)
+raw_allowed_hosts = env("ALLOWED_HOSTS")
+if ENVIRONMENT in ["development", "local"]:
+    fallback_hosts = ["localhost", "127.0.0.1", "backend", "django-app", "testserver"]
+    ALLOWED_HOSTS = list(dict.fromkeys(raw_allowed_hosts + fallback_hosts))
+else:
+    if not raw_allowed_hosts:
+        raise ValueError("FATAL: ALLOWED_HOSTS must be explicitly defined outside development.")
+    ALLOWED_HOSTS = raw_allowed_hosts
+
+# Dynamic CORS & CSRF Origin Handling
 raw_cors_origins = env("CORS_ALLOWED_ORIGINS")
 raw_csrf_origins = env("CSRF_TRUSTED_ORIGINS")
 
@@ -76,6 +92,7 @@ else:
     CORS_ALLOWED_ORIGINS = raw_cors_origins
     CSRF_TRUSTED_ORIGINS = raw_csrf_origins
 
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 
 # ------------------------------------------------------------------------------
@@ -84,11 +101,8 @@ CORS_ALLOW_CREDENTIALS = True
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# Avoid local development cookie dropouts while enforcing HTTPS in production
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
-CSRF_COOKIE_HTTPONLY = False  # Allows frontend JS to read CSRF token if required
+CSRF_COOKIE_HTTPONLY = False  # Allows frontend JS to read CSRF token for double-submit
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
 
@@ -238,6 +252,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticatedOrReadOnly",
     ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.ScopedRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "auth": "10/min",
+        "auth_refresh": "30/min",
+    },
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ) if not DEBUG else (

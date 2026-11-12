@@ -131,16 +131,23 @@ apiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // DRF endpoint reads HttpOnly refresh token cookie and issues fresh tokens
+        const csrfToken = getCsrfToken();
+        const refreshHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        };
+        if (csrfToken) {
+          refreshHeaders['X-CSRFToken'] = csrfToken;
+        }
+
+        // DRF endpoint reads HttpOnly refresh token cookie and issues fresh tokens.
+        // Carries explicit X-CSRFToken header to satisfy CookieCSRFProtectedMixin.
         await axios.post(
           API_ENDPOINTS.auth.tokenRefresh,
           {},
           {
             withCredentials: true,
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
+            headers: refreshHeaders,
           }
         );
 

@@ -17,14 +17,26 @@ This document defines mandatory security configurations and runtime controls acr
 
 ## 2. CORS & CSRF Hardening
 - **Strict Origin Whitelisting**:
-  - `CORS_ALLOW_ALL_ORIGINS = False` must be enforced across all environments except strictly defined, isolated mock unit tests.
-  - Production and staging must explicitly define `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` matching configured frontend domains.
+  - `CORS_ALLOW_ALL_ORIGINS = False` must be written out literally across all environments except strictly defined, isolated mock unit tests, so relaxing it is immediately visible in review.
+  - Development origins (`localhost`, `127.0.0.1`) are environment-gated: inject them into `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, and `ALLOWED_HOSTS` only when `ENVIRONMENT in {"development", "local"}`.
+  - Outside development, all three lists must be explicitly configured and non-empty; fail startup closed if missing. Never merge development hostnames (`testserver`, `backend`, `django-app`) into production `ALLOWED_HOSTS`.
   - Subdomain wildcards (`CORS_ALLOWED_ORIGIN_REGEXES`) must only be utilized with strict regex anchors.
 - **CSRF & Cookie Protection**:
   - When browser clients interact with cookie-authenticated endpoints, ensure `CORS_ALLOW_CREDENTIALS = True` is paired with explicit origin validation (never wildcard `*`).
-  - **Mandatory CSRF Verification for Cookie Auth**: Any state-changing API request (POST, PUT, PATCH, DELETE) authenticated via cookies (e.g., `CookieJWTAuthentication`) MUST enforce CSRF verification (via DRF CSRFCheck or double-submit CSRF headers). Relying solely on `SameSite=Lax` without active CSRF verification is strictly disallowed.
-  - Enforce `CSRF_COOKIE_HTTPONLY = False` only if client-side frameworks read CSRF tokens from cookies for header submission, or use header-based double-submit patterns with `CSRF_COOKIE_SAMESITE = 'Lax'` / `'Strict'`.
-  - For production HTTPS, enforce `SESSION_COOKIE_SECURE = True` and `CSRF_COOKIE_SECURE = True`.
+  - **Mandatory CSRF Verification for Cookie-CONSUMING Endpoints**: Any state-changing endpoint (POST, PUT, PATCH, DELETE) that **reads, writes, or mints credential cookies** MUST enforce CSRF verification via DRF `CSRFCheck`. This explicitly covers `login/`, `register/`, `token/refresh/`, and `logout/` — not only views reached through `CookieJWTAuthentication`.
+    - *Rationale*: DRF's `APIView.as_view()` is marked `csrf_exempt` by design, so standard `CsrfViewMiddleware` never evaluates these endpoints; CSRF is only re-introduced if an authentication class runs `CSRFCheck`. Views declaring `authentication_classes = []` or `permission_classes = [AllowAny]` that read or set `request.COOKIES` are completely exposed unless they invoke `CSRFCheck` explicitly (e.g., via `CookieCSRFProtectedMixin`).
+    - *Prohibited*: Relying on `@ensure_csrf_cookie` alone (it mints the cookie and verifies nothing) or relying solely on `SameSite=Lax` without an active check.
+    - *Required*: Logout, login, and refresh are CSRF-protected. A CSRF-exempt refresh or logout is a merge blocker (prevents login-CSRF, forced-logout DoS with blacklisting, and cross-origin session rotation).
+  - Enforce `CSRF_COOKIE_HTTPONLY = False` so client-side frameworks can read the `csrftoken` cookie for header injection (`X-CSRFToken`), paired with `CSRF_COOKIE_SAMESITE = 'Lax'`.
+  - **Cookie Secure Policy is Transport-Derived, Never `DEBUG`-Derived**:
+    - Define a single source of truth (`COOKIE_SECURE`) consumed by session, CSRF, and JWT cookie helpers. Computing `secure = not DEBUG` in multiple disparate files is prohibited.
+    - Production must fail closed: a non-Secure cookie policy outside `ENVIRONMENT=development|local` is an immediate startup error.
+    - Local Docker stacks commonly run `DEBUG=0` over plain HTTP (`http://localhost:8080`). Such stacks MUST set `ENVIRONMENT=development` and `COOKIE_SECURE=0` explicitly. (Symptom of misconfiguration: login returns 200, browser silently discards `Secure` cookies over HTTP, and the next mutation fails with `CSRF Failed: CSRF cookie not set`).
+    - `SameSite=Lax` is the default. `SameSite=None` requires `Secure` and a documented cross-site architectural decision.
+- **Topology & Deployment Hardening**:
+  - **Same-Origin Default Topology**: By default, serve the frontend SPA and `/api/` behind a unified reverse proxy (nginx) host with `NEXT_PUBLIC_API_BASE_URL=""` (relative). Separate subdomains (`app.example.com` -> `api.example.com`) require explicit parent domain configuration (`CSRF_COOKIE_DOMAIN=".example.com"`), because cross-origin JS cannot read an API domain's cookie for double-submit headers.
+  - **Auth Endpoint Rate Limiting**: All credential endpoints (`login/`, `register/`, `token/refresh/`, `otp/*`) MUST declare DRF throttle scopes (e.g., `ScopedRateThrottle`).
+  - **Deployment Gate**: Production configuration MUST pass `python manage.py check --deploy`, terminate TLS at the edge, and enforce HSTS (`SECURE_HSTS_SECONDS > 0`).
 - **Cookie Scope Alignment**:
   - All authentication cookies (`pod_access_token` and `pod_refresh_token`) MUST be scoped to `Path=/`. Never scope refresh cookies to subpaths (e.g., `/api/auth/`), as this breaks frontend route guards (`middleware.ts`) and SSR pre-fetching.
 
