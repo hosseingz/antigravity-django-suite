@@ -60,7 +60,11 @@ These guardrails enforce zero-hallucination, production-ready patterns across al
   - `set_auth_cookies` and `clear_auth_cookies` must strictly use `path="/"`, `SameSite="Lax"`, and derive `secure` from `settings.COOKIE_SECURE`.
   - Logout MUST be CSRF-protected, blacklist the presented `jti` in Redis cache for its remaining TTL, and issue explicit Set-Cookie eviction headers.
   - Refresh endpoints must record old `jti` in Redis blacklist with TTL matching remaining token lifetime and issue new rotated pairs.
-  - Startup checks must fail if `JWT_SIGNING_KEY` is missing or identical to `SECRET_KEY`.
+  - **Startup checks must fail if `JWT_SIGNING_KEY` is missing or identical to `SECRET_KEY`**.
+  - **Session-Family Revocation**: On every JWT-authenticated request, `CookieJWTAuthentication` must verify that the user's session family has not been invalidated in Redis (`jwt:user_revoked:{user_id}`).
+  - **OTP & Credential Hygiene**: OTP codes must never appear in application logs, phone inputs must be validated for a plausible digit count (10-15 digits) before they reach OTP cache keys or the SMS provider, and OTP endpoints must declare scoped rate throttling.
+  - **Open Redirect Guardrails**: Redirect logic in middleware and login views must reject protocol-relative URLs (`//` or `/\`).
+  - **Guest Cart Isolation**: Never share anonymous session state across visitors; enforce isolated UUIDv4 keys and CSRF protection on cart mutations.
 
 ---
 

@@ -98,14 +98,19 @@ When adding a new domain app to `apps/`, adhere strictly to these rules:
   - *Risk*: Placing WhiteNoise after `SessionMiddleware` or `AuthenticationMiddleware` forces Django to initialize sessions and authenticate database users for every static asset request (CSS, JS, images), degrading throughput and leaking session cookies.
 
 - **Anti-Pattern 2: Hardcoding `SECRET_KEY` or Insecure Production Fallbacks**
-  - *Rule*: In production (`DEBUG=False`), missing `SECRET_KEY` MUST raise a fatal exception during startup.
-  - *Risk*: A hardcoded or deterministic `SECRET_KEY` completely compromises cryptographic signing, CSRF protection, and password reset tokens.
+  - *Rule*: In non-development environments (`ENVIRONMENT not in {"development", "local"}`), missing `SECRET_KEY`/`JWT_SIGNING_KEY` or values matching the shipped `INSECURE_SECRET_PREFIXES` list (`django-insecure*`, `insecure*`, `change-this*`, `change-me*`, `changeme*`, `replace-*`, `replace_*`, `default-*`) MUST be rejected by `_require_strong_secret` and fail startup closed. In development those same values are replaced by a random per-process key.
+  - *Risk*: Hardcoded, default, or predictable secrets completely compromise cryptographic signing, sessions, CSRF protection, and password reset tokens.
+  - *Key Separation*: `JWT_SIGNING_KEY` MUST be distinct from `SECRET_KEY`. Reusing the framework secret for token signing raises an immediate assertion error on startup.
 
-- **Anti-Pattern 3: Omitting `sys.path` Injection for `apps/`**
+- **Anti-Pattern 3: Environment Information Disclosure in Healthchecks**
+  - *Rule*: Public `/api/health/` probes must only return operational status (`{"status": "healthy"}`) and must NOT disclose active deployment environment names or infrastructure metadata.
+  - *Risk*: Revealing deployment stages (`staging`, `preview`, `production`) aids attackers in reconnaissance and environment fingerprinting.
+
+- **Anti-Pattern 4: Omitting `sys.path` Injection for `apps/`**
   - *Rule*: Never create applications inside `apps/` without injecting `apps/` into `sys.path`.
   - *Risk*: Causes model registry duplicate collision (`RuntimeError: Conflicting 'model' in application`), fragmented migration graphs, and serialization bugs.
 
-- **Anti-Pattern 4: Blindly appending non-existent folders to `STATICFILES_DIRS`**
+- **Anti-Pattern 5: Blindly appending non-existent folders to `STATICFILES_DIRS`**
   - *Rule*: Always verify folder existence before appending (`if (BASE_DIR / 'assets').is_dir(): ...`).
   - *Risk*: Django crashes on startup during `collectstatic` or `runserver` if a configured directory in `STATICFILES_DIRS` does not physically exist on disk.
 
@@ -152,4 +157,4 @@ When setting up or restructuring a Django project using this architecture:
    ```
 
 4. **Verify Health Endpoint**:
-   Confirm `/api/health/` returns `{"status": "healthy", "environment": ...}` with HTTP 200.
+   Confirm `/api/health/` returns `{"status": "healthy"}` with HTTP 200 without exposing sensitive environment metadata.

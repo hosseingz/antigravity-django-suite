@@ -65,6 +65,12 @@ Precedence: `.agent/rules/ai-guardrails.md` > `.agent/rules/security-protocols.m
 - [ ] Credential endpoints (`login`, `register`, `token/refresh`, `otp/*`) declare DRF throttle scopes.
 - [ ] OTP: constant-time compare, single use, TTL, lockout, and entropy ≥ 6 digits from a CSPRNG.
 - [ ] Every view declares `permission_classes`; public endpoints are explicitly `AllowAny` with a reason.
+- [ ] Active session-family revocation verified via O(1) Redis check (`jwt:user_revoked:{user_id}`) on authenticated requests.
+- [ ] OTP verification codes are never logged; phone numbers are checked for plausible digit length (10-15 digits); dedicated throttle scopes (`auth_otp`, `auth_otp_verify`) are registered.
+- [ ] Next redirect parameters in middleware and auth views are sanitized against protocol-relative open redirect attacks (`//` or `/\`).
+- [ ] Guest shopping cart state uses per-visitor UUIDv4 (no shared static `"anonymous_session"`); frontend uses CSPRNG; cart mutations enforce CSRF.
+- [ ] Secret settings gate on `_require_strong_secret` (fail closed outside dev on `django-insecure-*` or placeholder prefixes) and assert `JWT_SIGNING_KEY != SECRET_KEY`.
+- [ ] Nginx ingress sandboxes user media (`Content-Security-Policy: default-src 'none'; sandbox`), disables server tokens, and containers enforce `no-new-privileges:true`.
 
 ## Handoff
 

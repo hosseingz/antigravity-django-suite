@@ -42,7 +42,16 @@ if env_file.is_file():
 DEBUG = env("DEBUG")
 ENVIRONMENT = env("ENVIRONMENT").lower()
 
-INSECURE_SECRET_PREFIXES = ("django-insecure", "change-this", "replace-", "replace_", "changeme")
+INSECURE_SECRET_PREFIXES = (
+    "django-insecure",
+    "insecure",
+    "change-this",
+    "change-me",
+    "changeme",
+    "replace-",
+    "replace_",
+    "default-",
+)
 
 
 def _is_insecure_secret(value: str) -> bool:

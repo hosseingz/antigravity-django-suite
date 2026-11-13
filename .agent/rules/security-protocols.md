@@ -61,3 +61,55 @@ This document defines mandatory security configurations and runtime controls acr
   - Deny insecure fallbacks for production runtime (e.g., raise an immediate startup exception if `SECRET_KEY` or `JWT_SIGNING_KEY` is missing or set to a default development string).
 - **Static Analysis & Secret Scanning**:
   - Ensure `.gitignore` explicitly excludes `.env`, `*.pem`, `*.key`, `*.sqlite3`, and sensitive export artifacts.
+- **Fail-Closed Secret Enforcement & Key Diversity**:
+  - The framework settings must implement `_require_strong_secret` gating: any placeholder matching the shipped `INSECURE_SECRET_PREFIXES` list (`django-insecure*`, `insecure*`, `change-this*`, `change-me*`, `changeme*`, `replace-*`, `replace_*`, `default-*`) or an empty value MUST resolve to a random key in development and MUST cause an immediate startup crash outside development (`ENVIRONMENT not in {"development", "local"}`).
+  - In development environments, empty or placeholder secrets must auto-generate a cryptographically secure random fallback (`secrets.token_urlsafe(64)`), ensuring default development spins up safely without static predictable keys.
+  - Startup checks must assert `JWT_SIGNING_KEY != SECRET_KEY` under all runtime environments.
+
+---
+
+## 4. Edge & Reverse Proxy Security (Nginx & Docker)
+- **Container Isolation (`no-new-privileges`)**:
+  - All production and staging services in `docker-compose.yml` (`backend`, `frontend`) must set `security_opt: ["no-new-privileges:true"]` to prevent unprivileged processes from acquiring escalated root capabilities via `setuid` binaries.
+- **Reverse Proxy Header Hardening (Nginx)**:
+  - `server_tokens off;` must be configured globally to suppress Nginx version fingerprinting.
+  - Set a realistic `client_max_body_size` (e.g., `25M;`) on public ingress to mitigate buffer exhaustion and denial of service.
+  - Global baseline response headers must enforce:
+    - `X-Content-Type-Options: nosniff`
+    - `X-Frame-Options: DENY`
+    - `Referrer-Policy: strict-origin-when-cross-origin`
+  - Nginx locations that declare their own `add_header` do not inherit server-level headers, so `/static/` and `/media/` must repeat the headers they need.
+  - `X-Frame-Options` must match Django's `X_FRAME_OPTIONS` (`DENY`); emitting two different values on one response makes the effective policy depend on browser error handling.
+- **User Upload & Media Sandbox Defense**:
+  - Any reverse proxy route serving untrusted user media (`/media/`) MUST inject:
+    - `Content-Security-Policy: default-src 'none'; sandbox;`
+    - `X-Content-Type-Options: nosniff;`
+  - This prevents uploaded files (such as malicious HTML, SVG with embedded scripts, or polyglot files) from executing active JavaScript within the origin context.
+
+---
+
+## 5. Domain-Specific Security Protocols (E-Commerce Cart & Guest State)
+- **Per-Guest State Isolation**:
+  - Anonymous guest shopping sessions MUST never share a static Redis key (such as `"anonymous_session"`), which causes global cart state pollution and privacy leaks between unauthenticated visitors.
+  - Every guest visitor must receive an isolated, cryptographically generated UUIDv4 (`cart_guest_uuid`).
+  - Frontend client generation of guest UUIDs MUST use CSPRNG (`crypto.getRandomValues`), never predictable pseudo-random generators (`Math.random()`).
+  - Backend cart APIs must validate the guest UUID strictly against canonical `uuid.UUID` formatting before interacting with Redis keys to eliminate cache pollution or invalid key injection.
+- **Cart Mutation CSRF Defense**:
+  - All state-changing cart endpoints (item addition, modification, quantity updates, clearance) accessed via cookie sessions MUST enforce CSRF verification (e.g., via `CartCSRFProtectionMixin`).
+  - The guest cart UUID cookie (`cart_guest_uuid`) must be configured with `SameSite=Lax` and transport-derived `secure`.
+
+---
+
+## 6. Authentication Flows, Open Redirect & Credential Redaction
+- **Protocol-Relative Open Redirect Defense**:
+  - Route guards and login redirects checking the `next` parameter must validate that the destination is strictly internal:
+    - Must start with `/` and NOT start with `//` or `/\`.
+    - Protocol-relative URLs (e.g., `//evil.com` or `/\evil.com`) are treated by modern browsers as scheme-relative absolute navigations and MUST be rejected, falling back to a fixed internal route (e.g., `/dashboard` in `middleware.ts`).
+- **OTP & Sensitive Credential Redaction**:
+  - One-Time Passwords (OTP), raw verification codes, and tokens must NEVER be logged to `stdout`, `stderr`, or server logging backends under any log level.
+  - Phone numbers received during auth flows must be validated for a plausible digit count (10-15 digits) before triggering notification or cache services; OTP cache keys derive from the digits only, so a digit-less value must be rejected rather than collapsed into one shared key.
+- **Throttling Scopes on Auth Handlers**:
+  - Endpoints initiating or verifying OTPs (`otp/send/`, `otp/verify/`) MUST define explicit DRF throttle scopes (`throttle_scope = "auth_otp"`, `throttle_scope = "auth_otp_verify"`) with dedicated limits defined in `REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']`.
+- **Global Session-Family Revocation**:
+  - `CookieJWTAuthentication` must perform an O(1) Redis check against `jwt:user_revoked:{user_id}` on every JWT-authenticated request (header or cookie).
+  - Setting this key invalidates every outstanding access token of that user immediately, without waiting for expiration. The shipped `RefreshTokenView` sets it on refresh-token reuse; suspension, password-change and global-logout paths must set the same key.

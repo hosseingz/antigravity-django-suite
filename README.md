@@ -58,18 +58,21 @@ An enterprise-grade, high-performance skill suite for **Google Antigravity (AGY)
   - Dedicated `/api/health/` container liveness probe.
   - Centralized DRF `EXCEPTION_HANDLER` producing a normalized 3-part error contract (`{detail, code, fields}`).
 
-- **Dual-Token HttpOnly Security**:
+- **Dual-Token HttpOnly Security & Comprehensive Hardening**:
   - Zero tokens stored in browser `localStorage`, `sessionStorage`, or JavaScript variables (full XSS immunity).
   - Dual cookie management: `pod_access_token` (15 minutes) and `pod_refresh_token` (7 days) scoped explicitly to `Path=/` with `HttpOnly; SameSite=Lax`.
   - Transport-derived cookie security (`COOKIE_SECURE`) decoupled from `DEBUG` to eliminate silent HTTP cookie drops in Docker local development while failing closed in production.
   - Mandatory CSRF verification for cookie-consuming endpoints: `CookieCSRFProtectedMixin` enforces DRF `CSRFCheck` across `login/`, `register/`, `token/refresh/`, and `logout/`.
   - Scoped public GET readability: public safe requests (`GET`, `HEAD`) remain accessible anonymously even when access cookies expire.
-  - Scoped rate-limiting (`ScopedRateThrottle`) on all credential endpoints to eliminate brute-force attack vectors.
+  - Scoped rate-limiting (`ScopedRateThrottle`) on all credential endpoints to eliminate brute-force attack vectors, with dedicated rates for OTP endpoints (`auth_otp`, `auth_otp_verify`).
+  - Session-family revocation: fast O(1) Redis check against `jwt:user_revoked:{user_id}` on every JWT-authenticated request for immediate account/session cutoff.
   - Stateful Refresh Token Rotation (RTR): Single-use refresh tokens tracked in Redis with automatic token family revocation upon reuse detection.
   - Mandatory unique `jti` (JWT ID) claims in all generated payloads for deterministic server-side revocation.
-  - Cryptographic separation: dedicated `JWT_SIGNING_KEY` enforced (never reuses Django core `SECRET_KEY`).
+  - Cryptographic separation & fail-closed secret validation: dedicated `JWT_SIGNING_KEY` enforced (never reuses `SECRET_KEY`); `_require_strong_secret` rejects default insecure placeholders outside development.
   - Deterministic logout eviction emitting `Max-Age=0` and past epoch expiration headers.
-  - Non-premature route eviction in Next.js Edge middleware allowing page transitions when refresh tokens exist on `Path=/`.
+  - Open redirect defense: post-login redirect targets in `middleware.ts` reject protocol-relative URLs (`//` and `/\`).
+  - Zero OTP exposure in logs and validation of phone digit length (10-15 digits).
+  - Edge sandboxing: Nginx `/media/` sandbox Content Security Policy (`default-src 'none'; sandbox`), `server_tokens off`, and Docker `security_opt: [no-new-privileges:true]`.
   - Single-refresh mutex lock in Axios preventing race conditions and infinite rotation loops, automatically injecting `X-CSRFToken`.
   - Redis-backed SMS OTP verification with brute-force lockout rate-limiting and constant-time string comparison (`hmac.compare_digest`).
 
@@ -83,7 +86,9 @@ An enterprise-grade, high-performance skill suite for **Google Antigravity (AGY)
 
 - **High-Concurrency Domain Modules**:
   - Redis Hash shopping cart engine delivering sub-millisecond cart mutations decoupled from relational database locks.
-  - Transparent anonymous guest tracking via RFC4122 `X-CART-UUID`.
+  - Transparent anonymous guest tracking via RFC4122 `X-CART-UUID` generated with CSPRNG (`crypto.getRandomValues`).
+  - Isolated per-guest UUID state in Redis (no shared static anonymous session keys) and canonical UUID validation.
+  - Cart CSRF protection mixin (`CartCSRFProtectionMixin`) on cookie-authenticated cart mutations.
   - Atomic server-side guest-to-user cart merging upon authentication.
   - Monotonic Sequence Guard in Zustand store eliminating UI race conditions during rapid mutation events.
 

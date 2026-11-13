@@ -139,6 +139,21 @@ This module is designed as an optional domain extension. It does **not** bloat c
   - *Risk*: Users lose unauthenticated cart items after logging in, or guest carts leak memory across millions of abandoned sessions.
   - *Solution*: Atomic merge with explicit TTL expiration and guest key deletion.
 
+- **Anti-Pattern 5: Shared Static Guest Session Keys**
+  - *Rule*: Never fall back to a shared static key (e.g., `"anonymous_session"`) when a guest UUID is missing.
+  - *Risk*: Multiple unauthenticated visitors browsing simultaneously share the same cart key, overwriting each other's items and leaking basket contents across different users.
+  - *Solution*: Auto-generate a per-guest UUIDv4 on the backend if missing, set the `cart_guest_uuid` cookie, and validate every guest identifier as a canonical UUID (`uuid.UUID`) — any UUID version, not a v4-only check — before it is used in a Redis key.
+
+- **Anti-Pattern 6: CSRF Vulnerability on Cookie-Authenticated Cart Mutations**
+  - *Rule*: State-changing cart operations (`POST`, `PUT`, `PATCH`, `DELETE`) on views using session or JWT cookies MUST enforce CSRF checks via `CartCSRFProtectionMixin`.
+  - *Risk*: Attackers on third-party origins can trigger unwanted cart additions or deletions using the victim's ambient browser credentials.
+  - *Solution*: Use `CartCSRFProtectionMixin` to run DRF's `CSRFCheck` on mutating requests authenticated with cookies.
+
+- **Anti-Pattern 7: Non-Cryptographic Guest UUID Generation**
+  - *Rule*: Frontend generation of guest UUIDs must NEVER fall back to `Math.random()`.
+  - *Risk*: Predictable guest identifiers enable session takeover or cart enumeration.
+  - *Solution*: Generate standard UUIDv4 using CSPRNG (`crypto.getRandomValues(new Uint8Array(16))`).
+
 ---
 
 ## 4. Bundled Resource Templates
@@ -146,10 +161,10 @@ This module is designed as an optional domain extension. It does **not** bloat c
 The following production-ready templates are available in [`resources/`](./resources):
 
 - **Backend**:
-  - [`redis_cart.py`](./resources/backend/redis_cart.py): Complete Redis hash cart engine with stock validation, byte-safe decoding, pipeline merges, and guest eviction.
-  - [`views_cart.py`](./resources/backend/views_cart.py): DRF `CartAPIView` supporting `GET`, `POST`, `PATCH`, and `DELETE` with cache control headers.
+  - [`redis_cart.py`](./resources/backend/redis_cart.py): Complete Redis hash cart engine with stock validation, byte-safe decoding, canonical UUID validation, pipeline merges, and guest eviction.
+  - [`views_cart.py`](./resources/backend/views_cart.py): DRF `CartAPIView` supporting `GET`, `POST`, `PATCH`, and `DELETE` with `CartCSRFProtectionMixin`, per-guest UUID auto-issuance, and strict cache control headers.
 - **Frontend**:
-  - [`cartCookies.ts`](./resources/frontend/cartCookies.ts): Client-side RFC4122 guest UUID generation, cookie management, and cross-storage persistence.
+  - [`cartCookies.ts`](./resources/frontend/cartCookies.ts): Client-side RFC4122 guest UUID generation using CSPRNG (`crypto.getRandomValues`), cookie management, and cross-storage persistence.
   - [`useCartStore.ts`](./resources/frontend/useCartStore.ts): Production Zustand store with monotonic sequence guard protection and offline localStorage fallback.
 
 ---

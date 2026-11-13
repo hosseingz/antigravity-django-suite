@@ -75,6 +75,11 @@ Before scaffolding, review the technical rationale documented in [`security-hard
 - **Query-Based Database Readiness**: DB readiness probes must execute a query check (`SELECT 1` via psycopg or `pg_isready`), never bare TCP socket connects, ensuring WAL recovery is complete before running migrations.
 - **Next.js Build-Time vs. Runtime Variables**: `NEXT_PUBLIC_*` environment variables are baked into JavaScript bundles at `next build` time. They must be supplied via Docker `build.args` rather than runtime `environment:`.
 - **Host Line Endings (CRLF Guard)**: Multi-platform projects must enforce LF line endings via `.gitattributes` and inline `sed -i 's/\r$//'` in Dockerfiles for shell entrypoints.
+- **Container Privilege Escalation Defense**: Production and staging service definitions (`backend`, `frontend`) must enforce `security_opt: ["no-new-privileges:true"]` to block privilege escalation via `setuid` binaries.
+- **Nginx Ingress Hardening & Media Sandbox**:
+  - Global `server_tokens off;` and bounded `client_max_body_size 25M;` to block fingerprinting and buffer starvation.
+  - Global baseline headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` — matching Django's `X_FRAME_OPTIONS`, `Referrer-Policy: strict-origin-when-cross-origin`). Locations with their own `add_header` do not inherit these, so `/static/` and `/media/` repeat them.
+  - `/media/` location block MUST inject `Content-Security-Policy: default-src 'none'; sandbox;` and `X-Content-Type-Options: nosniff;` to isolate untrusted user uploads from active scripting contexts.
 
 ---
 

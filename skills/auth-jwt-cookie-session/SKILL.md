@@ -103,7 +103,22 @@ This skill establishes the production-grade authentication pipeline combining Dj
 - **Anti-Pattern 10: Unthrottled Credential Endpoints**
   - *Rule*: Authentication endpoints (`login/`, `register/`, `token/refresh/`, `otp/*`) must declare explicit DRF throttle scopes.
   - *Risk*: Line-rate credential brute force and denial of service attacks against cryptographic token hashing functions.
-  - *Solution*: Enforce `ScopedRateThrottle` with scoped limits (e.g., `10/min` for login, `30/min` for refresh) backed by Redis.
+  - *Solution*: Enforce `ScopedRateThrottle` with scoped limits (e.g., `10/min` for login, `30/min` for refresh, `5/min` for OTP request, and `10/min` for OTP verification) backed by Redis.
+
+- **Anti-Pattern 11: Protocol-Relative Open Redirects in Auth Gateways**
+  - *Rule*: Forwarding users post-login via the `next` query parameter must strictly reject protocol-relative URLs (`//evil.com`, `/\evil.com`).
+  - *Risk*: An attacker crafts a link like `/auth/login?next=//malicious-site.com`. Modern browsers interpret `//` as an absolute redirect matching the current scheme (`https:`), leading victims directly to a phishing domain post-authentication.
+  - *Solution*: `middleware.ts` validates the `next` parameter inline (`isLocalPath`): the value must begin with `/` and must not begin with `//` or `/\`, otherwise the redirect falls back to a fixed internal route (`/dashboard`).
+
+- **Anti-Pattern 12: OTP Exposure in Logs & Phone Number Pollution**
+  - *Rule*: OTP verification codes must NEVER be written to stdout or application log records. Inbound phone numbers must be validated for plausible digit length (10-15 digits) before initiating provider tasks.
+  - *Risk*: Centralized log aggregators (ELK, Datadog) indexing plain-text OTP codes expose transient credentials to unauthorized operators. Unbounded phone inputs trigger invalid upstream SMS provider billing spikes.
+  - *Solution*: Remove codes from logging payloads in `SendOtpView` and enforce `is_plausible_phone` validation.
+
+- **Anti-Pattern 13: Delayed Invalidation on User Compromise (Missing Session-Family Revocation)**
+  - *Rule*: In addition to individual token `jti` blacklisting upon logout, `CookieJWTAuthentication` must verify that the user's entire session family has not been revoked (`jwt:user_revoked:{user_id}`).
+  - *Risk*: If an account is suspended or a user changes their password, issued 15-minute access tokens remain valid until expiration unless individual access tokens are tracked.
+  - *Solution*: Fast O(1) Redis check against `jwt:user_revoked:{user_id}` on every JWT-authenticated request. Setting this key immediately invalidates all active access tokens for that user; `RefreshTokenView` sets it on reuse detection, and suspension/password-change paths must set the same key.
 
 ---
 
@@ -115,6 +130,7 @@ This skill establishes the production-grade authentication pipeline combining Dj
   - Prioritizes `Authorization: Bearer <token>` header (for external/mobile clients), falling back to `pod_access_token` HttpOnly cookie.
   - Decodes and validates tokens against dedicated `settings.JWT_SIGNING_KEY` (never `SECRET_KEY`).
   - Verifies token `jti` against the Redis blacklist (`jwt:blacklist:<jti>`).
+  - Verifies session-family revocation via `jwt:user_revoked:{user_id}` in Redis.
   - Enforces DRF `CSRFCheck` on cookie-authenticated mutating requests.
   - Implements scoped anti-silent-degradation logic: public safe requests (`GET`, `HEAD`) proceed anonymously; protected or mutating requests return `token_refresh_required` (HTTP 401).
 - [`views_auth.py`](./resources/backend/views_auth.py):
@@ -124,7 +140,7 @@ This skill establishes the production-grade authentication pipeline combining Dj
   - `LoginAPIView`: Authenticates credentials with throttling (`throttle_scope = "auth"`) and sets dual cookies.
   - `RefreshTokenView`: Verifies `pod_refresh_token` with CSRF protection, enforces Refresh Token Rotation (RTR), and detects token reuse.
   - `LogoutAPIView`: Blacklists active `jti` in Redis cache for its remaining TTL, clears cookies, and validates CSRF.
-  - `SendOtpView` & `VerifyOtpView`: Redis-backed passwordless SMS verification with 120s cooldowns and 5-attempt brute-force lockouts.
+  - `SendOtpView` & `VerifyOtpView`: Redis-backed passwordless SMS verification with 120s cooldowns, `is_plausible_phone` validation, scoped throttling (`auth_otp` and `auth_otp_verify`), and zero OTP logging.
 
 ### 3.2 Frontend Components (`resources/frontend/`)
 - [`middleware.ts`](./resources/frontend/middleware.ts):
@@ -132,6 +148,7 @@ This skill establishes the production-grade authentication pipeline combining Dj
   - Route matchers MUST correspond to routes that actually exist in the application.
   - Guards against premature eviction by recognizing valid refresh cookies on `Path=/`.
   - Automatically redirects authenticated users away from guest pages (`/auth/login`, `/auth/register`).
+  - Sanitizes `next` redirect target to reject protocol-relative URLs (`//` and `/\`).
 - [`useAuthStore.ts`](./resources/frontend/useAuthStore.ts):
   - Zustand auth store tracking `user`, `isAuthenticated`, and `isLoading`.
   - Safely hydrates from non-sensitive profile metadata in `localStorage`.
