@@ -412,6 +412,16 @@ OTP_MAX_ATTEMPTS = 5
 LOCKOUT_TTL_SECONDS = 900  # 15 minutes lockout after 5 failures
 
 
+def is_plausible_phone(phone: str) -> bool:
+    """
+    True when the submitted value holds 10-15 digits.
+
+    OTP keys are derived from the digits only, so a value without digits (e.g. "----------")
+    would collapse every such caller onto the same Redis keys and the same provisioned account.
+    """
+    return 10 <= len("".join(filter(str.isdigit, phone or ""))) <= 15
+
+
 def get_otp_redis_keys(phone: str) -> tuple[str, str, str, str]:
     sanitized = "".join(filter(str.isdigit, phone))
     return (
@@ -430,10 +440,11 @@ class SendOtpView(APIView):
     - Returns `retry_after` parameter to synchronize frontend countdown timers.
     """
     permission_classes = [AllowAny]
+    throttle_scope = "auth_otp"
 
     def post(self, request: Request) -> Response:
         phone = request.data.get("phone", "").strip()
-        if not phone or len(phone) < 10:
+        if not is_plausible_phone(phone):
             return Response(
                 {"detail": "A valid phone number is required.", "code": "invalid_phone"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -472,7 +483,9 @@ class SendOtpView(APIView):
         cache.set(attempts_key, 0, timeout=OTP_TTL_SECONDS)
 
         # 5. Dispatch via SMS Gateway (Simulated / Service Hook)
-        logger.info("[SMS-OTP-GATEWAY] Dispatched OTP code to phone %s: %s", phone[-4:], otp_code)
+        # The code is a login credential: stdout/container logs are collected, rotated and
+        # often readable by operators, so only the destination suffix is recorded.
+        logger.info("[SMS-OTP-GATEWAY] Dispatched OTP to phone ending %s", phone[-4:])
 
         return Response(
             {
@@ -491,6 +504,7 @@ class VerifyOtpView(APIView):
     - On success: provisions or fetches the user, sets HttpOnly cookies, and returns user data.
     """
     permission_classes = [AllowAny]
+    throttle_scope = "auth_otp_verify"
 
     def post(self, request: Request) -> Response:
         phone = request.data.get("phone", "").strip()
@@ -499,6 +513,12 @@ class VerifyOtpView(APIView):
         if not phone or not code:
             return Response(
                 {"detail": "Phone and OTP code are required.", "code": "missing_fields"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not is_plausible_phone(phone):
+            return Response(
+                {"detail": "A valid phone number is required.", "code": "invalid_phone"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

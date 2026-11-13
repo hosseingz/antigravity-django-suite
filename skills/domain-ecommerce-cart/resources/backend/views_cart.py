@@ -12,16 +12,46 @@ atomic transition from anonymous guest to authenticated user.
 """
 
 import logging
+import uuid
 from typing import Optional
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from rest_framework import permissions, status
+from rest_framework.authentication import CSRFCheck
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .redis_cart import RedisCart, merge_guest_cart_if_needed
 
 logger = logging.getLogger(__name__)
+
+CART_UUID_HEADER = "X-CART-UUID"
+CART_UUID_COOKIE = "cart_guest_uuid"
+CART_UUID_TTL_SECONDS = 60 * 60 * 24 * 30
+AUTH_COOKIE_NAMES = ("pod_access_token", "pod_refresh_token")
+
+
+def get_guest_identifier(request) -> Optional[str]:
+    """
+    Returns the caller's guest cart identifier as a canonical UUID, or None.
+
+    The identifier alone selects a guest cart, so it is parsed as a UUID: free-form text
+    would let a caller address arbitrary Redis key paths.
+    """
+    raw = (
+        request.headers.get(CART_UUID_HEADER)
+        or request.COOKIES.get(CART_UUID_COOKIE)
+        or request.COOKIES.get("x-cart-uuid")
+    )
+    if not raw:
+        return None
+    try:
+        return str(uuid.UUID(str(raw).strip()))
+    except (ValueError, AttributeError, TypeError):
+        logger.warning("Rejected malformed guest cart identifier on %s.", request.path)
+        return None
 
 
 def get_cart_for_request(request) -> RedisCart:
@@ -33,32 +63,67 @@ def get_cart_for_request(request) -> RedisCart:
     if user and user.is_authenticated:
         return RedisCart(identifier=str(user.id), is_user=True)
 
-    guest_uuid = (
-        request.headers.get("X-CART-UUID")
-        or request.COOKIES.get("cart_guest_uuid")
-        or request.COOKIES.get("x-cart-uuid")
-    )
-
+    guest_uuid = get_guest_identifier(request)
     if not guest_uuid:
-        # Fallback identifier for initial cold guest access
-        guest_uuid = "anonymous_session"
+        # A single constant key (formerly "anonymous_session") made every anonymous visitor
+        # with no cart identifier share one cart, readable and clearable by anyone.
+        guest_uuid = str(uuid.uuid4())
+        request._issued_cart_uuid = guest_uuid
 
     return RedisCart(identifier=guest_uuid, is_user=False)
 
 
-def add_cache_control_headers(response: Response) -> Response:
+class CartCSRFProtectionMixin:
+    """
+    Re-introduces CSRF verification for cart mutations that arrive with the ambient
+    authentication cookies, which DRF's csrf_exempt APIView would otherwise skip.
+
+    Only cookie-authenticated requests are checked: a guest cart is selected by a
+    SameSite=Lax cookie browsers already withhold from cross-site POSTs, and guests hold no
+    csrftoken, so enforcing the token there would break guest carts.
+    """
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.method in ("GET", "HEAD", "OPTIONS", "TRACE"):
+            return
+        if not any(name in request.COOKIES for name in AUTH_COOKIE_NAMES):
+            return
+
+        check = CSRFCheck(lambda req: None)
+        check.process_request(request)
+        reason = check.process_view(request, None, (), {})
+        if reason:
+            logger.warning("CSRF validation failed on cart endpoint (%s): %s", request.path, reason)
+            raise PermissionDenied(f"CSRF Failed: {reason}")
+
+
+def finalize_cart_response(request, response: Response) -> Response:
     """
     Appends strict cache prevention and Vary headers to prevent CDN or Next.js
-    intermediate caching of user/guest cart data.
+    intermediate caching of user/guest cart data, and persists a newly issued guest
+    identifier so the next request addresses the same cart.
     """
     response["Cache-Control"] = "no-cache, no-store, must-revalidate, private"
     response["Pragma"] = "no-cache"
     response["Expires"] = "0"
     response["Vary"] = "Cookie, X-CART-UUID, Authorization"
+
+    issued_uuid = getattr(request, "_issued_cart_uuid", None)
+    if issued_uuid:
+        response.set_cookie(
+            CART_UUID_COOKIE,
+            issued_uuid,
+            max_age=CART_UUID_TTL_SECONDS,
+            samesite="Lax",
+            secure=getattr(settings, "COOKIE_SECURE", False),
+            path="/",
+        )
+
     return response
 
 
-class CartAPIView(APIView):
+class CartAPIView(CartCSRFProtectionMixin, APIView):
     """
     Authoritative Shopping Cart API Endpoint.
     Accessible by both authenticated users and anonymous guests.
@@ -82,7 +147,7 @@ class CartAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-        return add_cache_control_headers(response)
+        return finalize_cart_response(request, response)
 
     def post(self, request, *args, **kwargs):
         """
@@ -132,7 +197,7 @@ class CartAPIView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
-        return add_cache_control_headers(response)
+        return finalize_cart_response(request, response)
 
     def patch(self, request, *args, **kwargs):
         """
@@ -180,7 +245,7 @@ class CartAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-        return add_cache_control_headers(response)
+        return finalize_cart_response(request, response)
 
     def delete(self, request, *args, **kwargs):
         """
@@ -215,4 +280,4 @@ class CartAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-        return add_cache_control_headers(response)
+        return finalize_cart_response(request, response)

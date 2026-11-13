@@ -15,6 +15,10 @@ x-backend-base: &backend-base
     dockerfile: Dockerfile
   restart: unless-stopped
   logging: *default-logging
+  # Block setuid/setgid binaries and file capabilities from granting more privilege
+  # inside the container than the unprivileged appuser already has.
+  security_opt:
+    - no-new-privileges:true
   networks:
     - internal_net
   env_file:
@@ -134,6 +138,8 @@ services:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     networks:
       - internal_net
     environment:

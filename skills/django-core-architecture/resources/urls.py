@@ -17,13 +17,7 @@ def healthcheck_view(request):
     Lightweight health check endpoint used by Docker, Kubernetes, and orchestrators.
     Verifies that the WSGI/ASGI application process is serving requests.
     """
-    return JsonResponse(
-        {
-            "status": "healthy",
-            "environment": getattr(settings, "ENVIRONMENT", "unknown"),
-        },
-        status=200,
-    )
+    return JsonResponse({"status": "healthy"}, status=200)
 
 
 urlpatterns = [

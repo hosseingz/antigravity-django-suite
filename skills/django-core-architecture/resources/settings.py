@@ -4,6 +4,7 @@ Decoupled 12-factor architecture powered by django-environ, WhiteNoise, and dyna
 """
 
 import os
+import secrets
 import sys
 from pathlib import Path
 import environ
@@ -41,18 +42,35 @@ if env_file.is_file():
 DEBUG = env("DEBUG")
 ENVIRONMENT = env("ENVIRONMENT").lower()
 
-SECRET_KEY = env("SECRET_KEY")
-if not SECRET_KEY and not DEBUG:
-    raise ValueError("FATAL: SECRET_KEY environment variable must be set in non-debug environments.")
-elif not SECRET_KEY:
-    SECRET_KEY = "django-insecure-development-fallback-key-do-not-use-in-production"
+INSECURE_SECRET_PREFIXES = ("django-insecure", "change-this", "replace-", "replace_", "changeme")
+
+
+def _is_insecure_secret(value: str) -> bool:
+    """True when a secret is empty or still a committed placeholder."""
+    normalized = (value or "").strip().lower()
+    return not normalized or normalized.startswith(INSECURE_SECRET_PREFIXES)
+
+
+def _require_strong_secret(value: str, name: str) -> str:
+    """
+    Rejects placeholder secrets; development receives a throwaway per-process key instead.
+
+    shortcut: the generated development key dies with the process (sessions and JWTs do not
+    survive a restart or span multiple workers); set the variable explicitly in those cases.
+    """
+    if not _is_insecure_secret(value):
+        return value
+    if ENVIRONMENT in ("development", "local"):
+        return secrets.token_urlsafe(64)
+    raise ValueError(f"FATAL: {name} must be set to a unique random value outside development.")
+
+
+SECRET_KEY = _require_strong_secret(env("SECRET_KEY"), "SECRET_KEY")
 
 # Dedicated JWT Signing Key (Cryptographic Separation: Never reuse SECRET_KEY)
-JWT_SIGNING_KEY = env("JWT_SIGNING_KEY")
-if not JWT_SIGNING_KEY and not DEBUG:
-    raise ValueError("FATAL: JWT_SIGNING_KEY environment variable must be set in non-debug environments.")
-elif not JWT_SIGNING_KEY:
-    JWT_SIGNING_KEY = "django-insecure-jwt-signing-fallback-key-never-use-in-production"
+JWT_SIGNING_KEY = _require_strong_secret(env("JWT_SIGNING_KEY"), "JWT_SIGNING_KEY")
+if JWT_SIGNING_KEY == SECRET_KEY:
+    raise ValueError("FATAL: JWT_SIGNING_KEY must not reuse SECRET_KEY.")
 
 # Transport-Derived Cookie Security (Never derive solely from DEBUG)
 COOKIE_SECURE = env.bool("COOKIE_SECURE", default=ENVIRONMENT not in ["development", "local"])
@@ -105,6 +123,14 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = False  # Allows frontend JS to read CSRF token for double-submit
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+
+SECURE_SSL_REDIRECT = COOKIE_SECURE
+SECURE_HSTS_SECONDS = 31536000 if COOKIE_SECURE else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = COOKIE_SECURE
+SECURE_HSTS_PRELOAD = False
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
 
 # ------------------------------------------------------------------------------
 # 5. Application Definition
@@ -258,6 +284,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "auth": "10/min",
         "auth_refresh": "30/min",
+        "auth_otp": "5/min",
+        "auth_otp_verify": "10/min",
     },
     "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
     "DEFAULT_RENDERER_CLASSES": (

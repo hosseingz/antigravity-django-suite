@@ -190,6 +190,13 @@ class CookieJWTAuthentication(BaseAuthentication):
                 code="token_malformed",
             )
 
+        if cache.get(f"jwt:user_revoked:{user_id}"):
+            logger.warning("Token presented for a revoked session family: user_id=%s", user_id)
+            raise exceptions.AuthenticationFailed(
+                detail={"detail": "Session has been terminated. Please log in again.", "code": "session_terminated"},
+                code="session_terminated",
+            )
+
         user = User.objects.filter(pk=user_id).first()
         if user is None:
             logger.warning("Token user ID %s not found in database.", user_id)

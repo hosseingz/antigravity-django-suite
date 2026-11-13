@@ -8,6 +8,7 @@ automatic stock verification, byte-safe deserialization, and atomic merge operat
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -366,13 +367,19 @@ def merge_guest_cart_if_needed(request) -> bool:
     if not user or not user.is_authenticated:
         return False
 
-    guest_uuid = (
+    raw_guest_uuid = (
         request.headers.get("X-CART-UUID")
         or request.COOKIES.get("cart_guest_uuid")
         or request.COOKIES.get("x-cart-uuid")
     )
 
-    if not guest_uuid:
+    if not raw_guest_uuid:
+        return False
+
+    try:
+        guest_uuid = str(uuid.UUID(str(raw_guest_uuid).strip()))
+    except (ValueError, AttributeError, TypeError):
+        logger.warning("Ignored malformed guest cart identifier during merge.")
         return False
 
     guest_cart = RedisCart(identifier=guest_uuid, is_user=False)

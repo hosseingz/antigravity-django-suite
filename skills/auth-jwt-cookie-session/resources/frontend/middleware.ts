@@ -54,7 +54,12 @@ export function middleware(request: NextRequest) {
     if (hasSession) {
       // User is already logged in (or has active refresh token), redirect to dashboard
       const nextParam = request.nextUrl.searchParams.get('next');
-      const destination = nextParam && nextParam.startsWith('/') ? nextParam : '/dashboard';
+      const isLocalPath =
+        !!nextParam &&
+        nextParam.startsWith('/') &&
+        !nextParam.startsWith('//') &&
+        !nextParam.startsWith('/\\');
+      const destination = isLocalPath ? nextParam : '/dashboard';
       return NextResponse.redirect(new URL(destination, request.url));
     }
 
